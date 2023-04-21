@@ -115,6 +115,32 @@ public:
 		return;
 	}
 
+	bool isSameLeafs(const unique_ptr<Node>& leaf)
+	{
+		if (this->getName() != leaf->getName())
+			return false;
+		else
+			return true;
+	}
+
+	bool isLeaf()
+	{
+		if (this->child != nullptr)
+			return false;
+		else
+			return true;
+	}
+
+	bool haveSibling()
+	{
+		if (this->sibling == nullptr)
+			return false;
+		else
+			return true;
+	}
+
+	
+
 	// Возвращает список всех ближайших детей
 	list<Node*> getNearestChildren()
 	{
@@ -134,12 +160,35 @@ public:
 		return children;
 	}
 
-	
 
-
-	int compare(unique_ptr<Node>& subTree, unique_ptr<Node> deltaTree)
+	/*! Сравнить два дерева и найти недостающие узлы
+	/param[in] subTree Сравниваемое дерево
+	/param[out] deltaTree Дерево разности, содержащее недостающие узлы
+	/return Количество различающихся узлов
+	*/
+	int compare(unique_ptr<Node>& subTree, unique_ptr<Node>& deltaTree)
 	{
+		// Если дерево разности пустое, создать в нём
+		if (deltaTree == nullptr)
+			deltaTree = make_unique<Node>(subTree->getName());
 
+		// Если текущие узлы - одинаковые листы, считать что различающихся узлов нет
+		if (this->isLeaf() && subTree->isLeaf())
+		{
+			if (this->isSameLeafs(subTree))
+			{
+				return 0;
+
+			}
+			else
+			{
+				return 1;
+			}
+		}
+		else if (this->isLeaf() && !subTree->isLeaf())
+		{
+			deltaTree = subTree->copy();
+		}
 	}
 
 
