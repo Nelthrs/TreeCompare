@@ -27,58 +27,35 @@ public:
 
 	void addChild(unique_ptr<Node> newChild)
 	{
-		if (this->child == nullptr)
-			this->child = move(newChild);
-		else
-			this->child->addSibling(move(newChild));
+		this->children.push_back(move(newChild));
 	}
 
-	void addSibling(unique_ptr<Node> newSibling)
+	Node* findNode(const string& targetName, int& count)
 	{
+		if (this == nullptr)
+			return nullptr;
+		if (this->name == targetName)
+		{
+			if (count == 1)
+				return this;
 
-		if (this->sibling == nullptr)
-			this->sibling = move(newSibling);
-		else
-			this->sibling->addSibling(move(newSibling));
-	}
-
-	Node* searchNode(const string& searchData, int entry) {
-		queue<Node*> q;
-		q.push(this);
-		int curEntry = 0;
-
-		// Пока очередь не пуста
-		while (!q.empty()) {
-			// Изъять первый узел из очереди
-			Node* current = q.front();
-			q.pop();
-
-			// Если название текущего и искомого узла совпали, считать этот узел очередным вхождением
-			if (current->getName() == searchData) {
-				curEntry++;
-				// Считать, что узел найден, если текущее вхождение = запрашиваемому вхождению
-				if (curEntry == entry) {
-					return current;
-				}
-			}
-			// Добавить потомков в очередь, если они есть
-			if (current->child != nullptr) {
-				q.push(current->child.get());
-			}
-			if (current->sibling != nullptr) {
-				q.push(current->sibling.get());
-			}
+			count--;
+		}
+		for (auto& child : children)
+		{
+			Node* foundNode = child->findNode(targetName, count);
+			if (foundNode != nullptr)
+				return foundNode;
 		}
 		return nullptr;
 	}
 
-	Node* findInSiblings(const string& targetName)
+	Node* findInChildren(const string& targetName)
 	{
-		while (this->sibling != nullptr)
+		for (auto& child : children)
 		{
-			if (this->sibling->getName() == targetName)
-				return this;
-			this->sibling->findInSiblings(targetName);
+			if (child->name == targetName)
+				return child.get();
 		}
 		return nullptr;
 	}
@@ -87,11 +64,9 @@ public:
 	{
 		auto root = make_unique<Node>(this->name);
 
-		if (this->child != nullptr) {
-			root->addChild(this->child->copy());
-		}
-		if (this->sibling != nullptr) {
-			root->addSibling(this->sibling->copy());
+		for (auto& child : children)
+		{
+			root->addChild(child->copy());
 		}
 
 		return root;
@@ -103,11 +78,11 @@ public:
 			cout << "-";
 		cout << this->name << endl;
 
-		if (this->child != nullptr)
-			child->print(level + 1);
-		if (this->sibling != nullptr)
-			sibling->print(level);
-
+		level++;
+		for (auto& child : children)
+		{
+			child->print(level);
+		}
 	}
 
 	void deleteNode(Node* node)
@@ -115,7 +90,7 @@ public:
 		return;
 	}
 
-	bool isSameLeafs(const unique_ptr<Node>& leaf)
+	bool sameNamed(const Node* leaf)
 	{
 		if (this->getName() != leaf->getName())
 			return false;
@@ -125,73 +100,30 @@ public:
 
 	bool isLeaf()
 	{
-		if (this->child != nullptr)
-			return false;
-		else
+		if (this->children.size() == 0)
 			return true;
+
+		return false;
 	}
 
-	bool haveSibling()
+	bool isNode()
 	{
-		if (this->sibling == nullptr)
-			return false;
-		else
-			return true;
+		return !this->isLeaf();
 	}
 
-	
-
-	// Возвращает список всех ближайших детей
-	list<Node*> getNearestChildren()
+	int allDescendantsCount()
 	{
-		list<Node*> children;
-		Node* curNode = this;
-		if (curNode->child != nullptr)
+		for (auto& child : children)
 		{
-			curNode = curNode->child.get();
-			children.push_back(curNode);
-			curNode = curNode->sibling.get();
-			while (curNode != NULL)
-			{
-				children.push_back(curNode);
-				curNode = curNode->sibling.get();
-			}
+			return children.size() + child->allDescendantsCount();
 		}
-		return children;
+		return 0;
 	}
 
-
-	/*! Сравнить два дерева и найти недостающие узлы
-	/param[in] subTree Сравниваемое дерево
-	/param[out] deltaTree Дерево разности, содержащее недостающие узлы
-	/return Количество различающихся узлов
-	*/
-	int compare(unique_ptr<Node>& subTree, unique_ptr<Node>& deltaTree)
+	int compare()
 	{
-		// Если дерево разности пустое, создать в нём
-		if (deltaTree == nullptr)
-			deltaTree = make_unique<Node>(subTree->getName());
 
-		// Если текущие узлы - одинаковые листы, считать что различающихся узлов нет
-		if (this->isLeaf() && subTree->isLeaf())
-		{
-			if (this->isSameLeafs(subTree))
-			{
-				return 0;
-
-			}
-			else
-			{
-				return 1;
-			}
-		}
-		else if (this->isLeaf() && !subTree->isLeaf())
-		{
-			deltaTree = subTree->copy();
-		}
 	}
-
-
 
 	/*! Найти поддерево
 	\param[in] subTree Искомое поддерево
@@ -230,8 +162,7 @@ public:
 	}
 protected:
 	string name;
-	unique_ptr<Node> child;
-	unique_ptr<Node> sibling;
+	vector<unique_ptr<Node>> children;
 };
 
 bool compareNodes(const Node* Node1, const Node* Node2)
@@ -332,7 +263,7 @@ string extractWord(string str, unsigned startIndex, string delimiters)
 	return str.substr(startIndex, word_end - startIndex);
 }
 
-vector<Lexem> parseOnLexems(string content, string delimiters)
+vector<Lexem> parseOnLexems(const string& content, string delimiters)
 {
 	vector<Lexem> lexems;
 	int i = 0;
