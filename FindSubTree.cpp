@@ -1,350 +1,208 @@
-
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <queue>
-#include <stack>
-#include <locale.h>
-#include <list>
-#include <set>
-#include <map>
-#include <algorithm>
+#include "findSubTree.h"
 
 using namespace std;
 
-enum LEXEM_TYPE
+Node::Node(string data)
 {
-	NODE, LEFT_BRACKET, RIGHT_BRACKET, UNKNOWN
-};
+	this->name = data;
+}
 
-enum NODE_TYPES {
-	LEAFS, NODES, LEAF_NODE, NODE_LEAF, NILL
-};
+void Node::addChild(unique_ptr<Node> newChild)
+{
+	this->children.push_back(move(newChild));
+}
 
-class Node {
-public:
+void Node::addChild(const string& newChildName)
+{
+	unique_ptr<Node> newChild = make_unique<Node>(newChildName);
+	this->addChild(move(newChild));
+}
 
-	Node(string data)
+unique_ptr<Node> Node::copy() const
+{
+	auto root = make_unique<Node>(this->name);
+
+	for (auto& child : children)
 	{
-		this->name = data;
+		root->addChild(child->copy());
 	}
 
-	void addChild(unique_ptr<Node> newChild)
+	return root;
+}
+
+bool Node::isLeaf() const
+{
+	if (this->children.size() == 0)
+		return true;
+
+	return false;
+}
+
+bool Node::isNode()
+{
+	return !this->isLeaf();
+}
+
+int Node::descendantsCount() const
+{
+	int count = children.size();
+	for (auto& child : children)
 	{
-		this->children.push_back(move(newChild));
+		count += child->descendantsCount();
 	}
+	return count;
+}
 
-	void addChild(const string& newChildName)
-	{
-		unique_ptr<Node> newChild = make_unique<Node>(newChildName);
-		this->addChild(move(newChild));
-	}
 
-	Node* findNode(const string& targetName, int& count)
-	{
-		if (this == nullptr)
-			return nullptr;
-		if (this->name == targetName)
-		{
-			if (count == 1)
-				return this;
+/*
 
-			count--;
-		}
-		for (auto& child : children)
-		{
-			Node* foundNode = child->findNode(targetName, count);
-			if (foundNode != nullptr)
-				return foundNode;
-		}
-		return nullptr;
-	}
-
-	Node* findInChildren(const string& targetName)
-	{
-		for (auto& child : children)
-		{
-			if (child->name == targetName)
-				return child.get();
-		}
-		return nullptr;
-	}
-
-	unique_ptr<Node> copy() const
-	{
-		auto root = make_unique<Node>(this->name);
-
-		for (auto& child : children)
-		{
-			root->addChild(child->copy());
-		}
-
-		return root;
-	}
-
-	void print(int level = 0) const
-	{
-		for (int i = 0; i < level; ++i)
-			cout << "-";
-		cout << this->name << endl;
-
-		level++;
-		for (auto& child : children)
-		{
-			child->print(level);
-		}
-	}
-
-	bool sameNamed(const Node* leaf) const
-	{
-		if (this->getName() != leaf->getName())
-			return false;
-		else
-			return true;
-	}
-
-	bool isLeaf() const
-	{
-		if (this->children.size() == 0)
-			return true;
-
-		return false;
-	}
-
-	bool isSimilarLeaves(const Node* node)
-	{
-		if (this->isLeaf() && node->isLeaf())
-		{
-			if (this->sameNamed(node))
-				return true;
-			else
-				return false;
-		}
-		return false;
-	}
-
-	bool isNode()
-	{
-		return !this->isLeaf();
-	}
-
-	int descendantsCount()
-	{
-		for (auto& child : children)
-		{
-			return children.size() + child->descendantsCount();
-		}
+int Node::cmpNodes(Node* cmpNode) {
+	if (this->isLeaf() && cmpNode->isLeaf()) {
 		return 0;
 	}
-
-	void writeInSet(set<Node*>& set)
-	{
-		if (this == nullptr)
-			return;
-
-		set.insert(this);
-
-		if (this->isNode())
-		{
-			for (auto& child : children)
-			{
-				child->writeInSet(set);
-			}
-		}
+	// ≈сли в первом дереве - лист, а во втором - узел, считать разность равной кол-ву потомков узла
+	if (this->isLeaf() && cmpNode->isNode()) {
+		return cmpNode->descendantsCount();
 	}
-
-	NODE_TYPES cmpNodes(Node* cmpNode) {
-		if (this->isLeaf() && cmpNode->isLeaf()) {
-			return LEAFS;
-		}
-		// ≈сли в первом дереве - лист, а во втором - узел, считать разность равной кол-ву потомков узла + 1
-		if (this->isLeaf() && cmpNode->isNode()) {
-			return LEAF_NODE;
-		}
-		// ≈сли в первом дереве - узел, а во втором лист, считать сравнение невозможным.
-		if (this->isNode() && cmpNode->isLeaf()) {
-			return NODE_LEAF;
-		}
-		// ≈сли эти дети - узлы, найти их разность
-		if (this->isNode() && cmpNode->isNode()) {
-			return NODES;
-		}
-		return NILL;
+	// ≈сли в первом дереве - узел, а во втором лист, считать сравнение невозможным.
+	if (this->isNode() && cmpNode->isLeaf()) {
+		return -1;
 	}
-	/*! ”дал€ет в вызываемом дереве поддеревь€, которые совпадают с поддеревь€ми из задаваемого дерева
-
-	
-	bool deleteSimilarSubTrees(unique_ptr<Node>& cmpTree)
-	{
-		bool nodeDeleted;
-		for (auto cmpTreeChild = cmpTree->children.begin(); cmpTreeChild != cmpTree->children.end(); )
-		{
-			nodeDeleted = false;
-			for (auto& treeChild : this->children)
-			{
-				if (treeChild->isSimilarLeaves(cmpTreeChild->get()))
-				{
-					cmpTreeChild = cmpTree->children.erase(cmpTreeChild);
-					nodeDeleted = true;
-					break;
-				}
-				else if (treeChild->isNode()&&)
-					treeChild->deleteSimilarSubTrees(*cmpTreeChild);
-			}
-			if (nodeDeleted == false)
-				++cmpTreeChild;
-		}
+	// ≈сли эти дети - узлы, найти их разность
+	if (this->isNode() && cmpNode->isNode()) {
+		return this->findDeltaPairs(cmpNode);
 	}
+	return -1;
+}
+*/
 
-	int compare(const unique_ptr<Node>& subTree, unique_ptr<Node>& deltaTree)
-	{
-		// ”далить текущий узел поддерева если он 
-		// (не совпадает по имени с текущим узлом сравниваемого дерева или с одним из его братьев)
-		// и (среди его потомков нет недостающих узлов)
+/*! Ќахождение пары поддеревьев с минимальной разностью
+\param[in] cmpTree —равниваемое дерево
+\return ѕары поддеревьев
+*/
 
-
-		if (!this->sameNamed(subTree.get()))
-			return subTree->descendantsCount() + 1;
-
-		// ≈сли рассматриваемые узлы - два однаковых листа, считать что ненайденных узлов - 0, если два разных листа, то 1
-		if (this->isLeaf() && subTree->isLeaf())
-		{
-			if (this->sameNamed(subTree.get()))
-				return 0;
-			else
-				return 1;
-		}
-		// ≈сли у рассматриваемого узла вызываемого дерева есть дети, а у рассматриваемого узла сравниваемого - нет, считать что дополнение невозможно
-		else if (this->isNode() && subTree->isLeaf())
-			return -1;
-
-		int minDelta = subTree->descendantsCount() + 1;
-		int delta = minDelta;
-		Node* minDeltaTree;
-
-
-		for (auto subTreeChild = subTree->children.begin(); subTreeChild != subTree->children.end(); )
-		{
-			for (auto treeChild = this->children.begin(); treeChild != this->children.end(); )
-			{
-				// —равнить поддеревь€
-				delta = (*subTreeChild)->compare(*treeChild);
-
-				if (delta == -1)
-					return -1;
-
-				// «аписать новое минимальное дерево
-				if (delta < minDelta)
-				{
-					minDelta = delta;
-					minDeltaTree = (*subTreeChild).get();
-				}
-
-				if (minDelta == 0)
-				{
-
-				}
-			}
-			if (delta == 0)
-			{
-				subTreeChild.reset();
-			}
-		}
-
-		return subTree->descendantsCount() + 1;
-	}
-
-	int findSubTree(const unique_ptr<Node>& subTree, unique_ptr<Node>& deltaTree);
-	*/
-
-	pair<int, Node*> findMinDeltaTree(const map<Node*, vector<pair<int, Node*>>> patch) 
-	{
-		auto it = patch.find(this);
-		// ≈сли узел найден
-		if (it != patch.end()) {
-			vector<pair<int, Node*>> pairs = it->second;
-			// ≈сли дл€ этого узла есть пары
-			if (!pairs.empty()) {
-				// Ќайти минимальную пару среди них
-				auto min_it = std::min_element(pairs.begin(), pairs.end(), 
-					[](const auto& pair1, const auto& pair2) {
-						if (pair1.first >= 0 && pair2.first >= 0) {
-							return pair1.first < pair2.first;
-						}
-					});
-				pair<int, Node*> minPair = *min_it;
-				return minPair;
-			}
-		}
-
-		return(make_pair(-1, nullptr));
-	}
-
-	int findDelta(unique_ptr<Node>& cmpTree) 
-	{
-		unique_ptr<Node> firstTree = this->copy();
-		unique_ptr<Node> secondTree = cmpTree->copy();
-		return firstTree->removeCommonNodes(secondTree);
-	}
-
-	int removeCommonNodes(const unique_ptr<Node>& cmpTree) 
-	{
-		map<Node*, vector<pair<int, Node*>>> patch;
-		int curDelta = -1;
-		Node* curTreeNode = nullptr;
-		vector<pair<int, Node*>> similarTrees;
-		// ƒл€ каждой пары детей в первом и втором дереве
-		for (auto& treeNode : this->children) {
-			curTreeNode = treeNode.get();
-			similarTrees.clear();
-			for (auto& cmpTreeNode : cmpTree->children) {
-				// ≈сли у детей одинаковые имена
-				if (treeNode->getName() == cmpTreeNode->getName()) {
-					switch (cmpNodes(cmpTreeNode.get())){
-					case LEAFS:
-						curDelta = 0;
-						break;
-					case NODES:
-						curDelta = treeNode->removeCommonNodes(cmpTreeNode);
-						break;
-					case LEAF_NODE:
-						curDelta = cmpTreeNode->descendantsCount();
-						break;
-					default:
-						curDelta = -1;
-						break;
-					}
-					similarTrees.push_back(make_pair(curDelta, cmpTreeNode.get()));
-				}
-			}
-			patch[curTreeNode] = similarTrees;
-		}
-
-		for (auto& treeNode : this->children) {
-			treeNode
-		}
-		
-
-	}
-
-	string getName() const
-	{
-		return this->name;
-	}
-
-	~Node()
-	{
-
-	}
-protected:
-	string name;
-	vector<unique_ptr<Node>> children;
-};
-
-bool compareNodes(const Node* Node1, const Node* Node2)
+/*
+int Node::findDeltaPairs(const Node* cmpTree)
 {
-	return Node1->getName() < Node2->getName();
+	map<Node*, vector<pair<int, Node*>>> patch;
+	int curDelta = -1;
+	Node* curCmpChild = nullptr;
+	vector<pair<int, Node*>> similarTrees;
+	if (this->descendantsCount() > cmpTree->descendantsCount()) {
+		return -1;
+	}
+	// ƒл€ каждой пары детей в первом и втором дереве
+	for (auto& cmpTreeChild : cmpTree->children) {
+		similarTrees.clear();
+		for (auto& treeChild : this->children) {
+			// ≈сли у детей одинаковые имена, вычислить их разность
+			if (treeChild->getName() == cmpTreeChild->getName()) {
+				curDelta = treeChild->cmpNodes(cmpTreeChild.get());
+				similarTrees.push_back(make_pair(curDelta, treeChild.get()));
+			}
+		}
+		if (similarTrees.empty()) {
+			curDelta = -1;
+			similarTrees.push_back(make_pair(curDelta, nullptr));
+		}
+		// —оотнести вычисленные разности каждого поддерева сравниваемого дерева
+		// и текущее поддерево главного дерева
+		if (patch.find(cmpTreeChild.get()) != patch.end()) {
+			vector<pair<int, Node*>>& existingVector = patch[cmpTreeChild.get()];
+			vector<pair<int, Node*>> newElements = similarTrees;
+			existingVector.insert(existingVector.end(), newElements.begin(), newElements.end());
+		}
+		else {
+			// curTreeNode отсутствует в словаре patch, создаем новую запись
+			patch[cmpTreeChild.get()] = similarTrees;
+		}
+	}
+
+	for (auto& cmpTreeChild : cmpTree->children) {
+		curDelta += cmpTreeChild->findMinDeltaPatch(patch).first;
+	}
+
+	return curDelta;
+}
+*/
+
+
+
+
+
+string Node::getName() const
+{
+	return this->name;
+}
+
+void Node::print(int level) const
+{
+	for (int i = 0; i < level; ++i)
+		cout << "-";
+	cout << this->name << endl;
+
+	level++;
+	for (auto& child : children)
+	{
+		child->print(level);
+	}
+}
+
+PatchNode::PatchNode()
+{
+	this->rootSubTree = nullptr;
+}
+
+PatchNode::PatchNode(Node* rootSubTree)
+{
+	this->rootSubTree = rootSubTree;
+}
+
+PatchConnection::PatchConnection(Node* searchedSubTree) {
+	this->searchedSubTree = searchedSubTree;
+	this->weight = -2;
+}
+
+PatchConnection::PatchConnection(int weight, Node* searchedSubTree)
+{
+	this->weight = weight;
+	this->searchedSubTree = searchedSubTree;
+}
+
+void PatchConnection::setWeight(int weight) {
+	this->weight = weight;
+}
+
+int PatchConnection::getWeight()
+{
+	return this->weight;
+}
+
+Node* PatchConnection::getSearchedSubTree()
+{
+	return this->searchedSubTree;
+}
+
+void PatchNode::addConnection(unique_ptr<PatchConnection> newConnection)
+{
+	this->connections.push_back(move(newConnection));
+}
+
+void PatchNode::addConnection(int weight, Node* searchedSubTree)
+{
+	auto newConnection = make_unique<PatchConnection>(weight, searchedSubTree);
+	this->connections.push_back(move(newConnection));
+}
+
+vector<unique_ptr<PatchConnection>> PatchNode::getConnections()
+{
+	return move(this->connections);
+}
+
+
+Node* PatchNode::getRoot()
+{
+	return this->rootSubTree;
 }
 
 class ExcForbiddenSymbol : public std::exception
@@ -440,7 +298,7 @@ string extractWord(string str, unsigned startIndex, string delimiters)
 	return str.substr(startIndex, word_end - startIndex);
 }
 
-vector<Lexem> parseOnLexems(const string& content, string delimiters)
+vector<Lexem> strToLexems(const string& content, string delimiters)
 {
 	vector<Lexem> lexems;
 	int i = 0;
@@ -494,39 +352,14 @@ unique_ptr<Node> sexpToTree(vector<Lexem>& lexems, int& index) {
 	return root;
 }
 
-// проверить
-list<Node*> listsDiff(list<Node*> list1, list<Node*> list2) {
-	std::list<Node*> difference = list2;
-	for (auto it1 = list1.begin(); it1 != list2.end();)
-	{
-		bool found = false;
-		auto it2 = list2.begin();
-		while (it2 != list2.end())
-		{
-			if ((*it1)->getName() == (*it2)->getName())
-			{
-				found = true;
-				it2 = list2.erase(it2);
-			}
-			else
-			{
-				++it2;
-			}
-		}
-		if (found)
-		{
-			it1 = list1.erase(it1);
-		}
-		else
-		{
-			++it1;
-		}
-	}
+unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, int startIndex)
+{
+	vector<Lexem> lexems = strToLexems(content, delimiters);
+	return sexpToTree(lexems, startIndex);
 }
 
 int main()
 {
-
 	setlocale(LC_ALL, "Russian");
 	string content;
 	string path{ R"(C:\Users\barten\Documents\eztree.txt)" };
@@ -534,20 +367,27 @@ int main()
 	readFile(path, &content);
 	string delimiters = "() \t\n\r";
 	cout << content << endl;
-	vector<Lexem> lexems = parseOnLexems(content, delimiters);
 
-	int startIndex = 0;
+	//string c1 = "1(2(3 4) 5(6(7) 8) 9)";
+	//string c2 = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
 
-	unique_ptr<Node> tree = sexpToTree(lexems, startIndex);
+	string c1 = "1(3(5 6) 3(5(7) 6) 4)";
+	string c2 = "1(3(5(7 8) 6) 3(5(7) 6) 4)";
 
-	auto newTree = tree->copy();
-	auto newChild = make_unique<Node>("1");
-	newChild->addChild("2");
-	newChild->addChild("3");
-	newTree->addChild(move(newChild));
-	
+	auto tree1 = parseOnTree(c1, delimiters);
+	auto tree2 = parseOnTree(c2, delimiters);
 
+	vector<unique_ptr<PatchNode>> patchNodes;
+	cout << tree1->buildPatch(tree2.get(), patchNodes) << endl;
 
-	tree->print();
-
+	for (auto& el : patchNodes) {
+		cout << "For root " + el->getRoot()->getName() << endl;
+		cout << "\t Connections:" << endl;
+		vector<unique_ptr<PatchConnection>>curConnections = el->getConnections();
+		for (auto& con : curConnections) {
+			cout << "\t\t Weight is " << con->getWeight() << " comparing with " << con->getSearchedSubTree()->getName() << endl;
+		}
+	}
 }
+
+
