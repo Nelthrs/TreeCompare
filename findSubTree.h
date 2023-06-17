@@ -3,7 +3,6 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <queue>
 #include <stack>
 #include <locale.h>
 #include <list>
@@ -22,26 +21,33 @@ enum NODE_TYPES {
 	LEAFS, NODES, LEAF_NODE, NODE_LEAF, NILL
 };
 
+class Patch;
 class PatchNode;
+class PatchConnection;
 
 class Node {
 public:
 	Node(string data);
-	int findDeltaPairs(const Node* cmpTree);
-	int buildPatch(Node* cmpTree, vector<unique_ptr<PatchNode>>& patchNodes);
-	vector<unique_ptr<PatchNode>> buildPatch(Node* searchedTree);
-	int cmpNodes(Node* cmpNode);
 	bool isNode();
 	bool isLeaf() const;
 	unique_ptr<Node> copy() const;
-	void addChild(const string& newChildName);
+	Node* addChild(const string& newChildName);
 	void addChild(unique_ptr<Node> newChild);
 	int descendantsCount() const;
+	int buildPatch(Node* cmpTree, Patch* generalPatch) const;
 	string getName() const;
 	void print(int level = 0) const;
+	bool isDescendant(Node* searchedNode) const;
+	vector<Node*> getChildren() const;
+	void setPatchNode(PatchNode* newPatchNode);
+	PatchNode* getRelPatch() const;
+	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const;
+	int buildDeltaTree(Node* deltaTree, Patch* generalPatch) const;
+	PatchConnection* getMinPatchConnection();
 protected:
 	string name;
 	vector<unique_ptr<Node>> children;
+	PatchNode* relPatch;
 };
 
 unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, int startIndex = 0);
@@ -64,9 +70,24 @@ public:
 	PatchNode(Node* rootSubTree);
 	void addConnection(unique_ptr<PatchConnection> newConnection);
 	void addConnection(int weight, Node* searchedSubTree);
-	vector<unique_ptr<PatchConnection>> getConnections();
+	vector<PatchConnection*> getConnections();
 	Node* getRoot();
+	int validConnectionsCount();
 protected:
 	Node* rootSubTree;
 	vector<unique_ptr<PatchConnection>> connections;
+};
+
+class Patch {
+public:
+	Patch();
+	vector<PatchNode*> getPatch() const;
+	int countLeafPatches(Node* tree);
+	vector<pair<PatchNode*, PatchConnection*>> findPointingNode(Node* pointNode) const;
+	int countDeltaNodes(const Node* pointTree, const Node* sourceTree) const;
+	vector<PatchNode*> findLeafPatches(Node* sourceTree);
+	void deleteAllReferences(const  Node*  excludedNode);
+	void addNode(unique_ptr<PatchNode> newNode);
+protected:
+	vector<unique_ptr<PatchNode>> patchNodes;
 };

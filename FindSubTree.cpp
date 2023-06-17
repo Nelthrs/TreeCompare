@@ -1,6 +1,8 @@
-#include "findSubTree.h"
+п»ї#include "findSubTree.h"
 
 using namespace std;
+
+const string GRAPHVIZ_PATH = "dot";
 
 Node::Node(string data)
 {
@@ -12,10 +14,13 @@ void Node::addChild(unique_ptr<Node> newChild)
 	this->children.push_back(move(newChild));
 }
 
-void Node::addChild(const string& newChildName)
+Node* Node::addChild(const string& newChildName)
 {
+	Node* addedChild = nullptr;
 	unique_ptr<Node> newChild = make_unique<Node>(newChildName);
+	addedChild = newChild.get(); 
 	this->addChild(move(newChild));
+	return addedChild;
 }
 
 unique_ptr<Node> Node::copy() const
@@ -53,82 +58,67 @@ int Node::descendantsCount() const
 	return count;
 }
 
-
-/*
-
-int Node::cmpNodes(Node* cmpNode) {
-	if (this->isLeaf() && cmpNode->isLeaf()) {
-		return 0;
+vector<Node*> Node::getChildren() const {
+	vector<Node*> result;
+	for (const auto& child : children) {
+		result.push_back(child.get());
 	}
-	// Если в первом дереве - лист, а во втором - узел, считать разность равной кол-ву потомков узла
-	if (this->isLeaf() && cmpNode->isNode()) {
-		return cmpNode->descendantsCount();
-	}
-	// Если в первом дереве - узел, а во втором лист, считать сравнение невозможным.
-	if (this->isNode() && cmpNode->isLeaf()) {
-		return -1;
-	}
-	// Если эти дети - узлы, найти их разность
-	if (this->isNode() && cmpNode->isNode()) {
-		return this->findDeltaPairs(cmpNode);
-	}
-	return -1;
+	return result;
 }
-*/
 
-/*! Нахождение пары поддеревьев с минимальной разностью
-\param[in] cmpTree Сравниваемое дерево
-\return Пары поддеревьев
-*/
-
-/*
-int Node::findDeltaPairs(const Node* cmpTree)
+void Node::setPatchNode(PatchNode* newPatchNode)
 {
-	map<Node*, vector<pair<int, Node*>>> patch;
-	int curDelta = -1;
-	Node* curCmpChild = nullptr;
-	vector<pair<int, Node*>> similarTrees;
-	if (this->descendantsCount() > cmpTree->descendantsCount()) {
-		return -1;
-	}
-	// Для каждой пары детей в первом и втором дереве
-	for (auto& cmpTreeChild : cmpTree->children) {
-		similarTrees.clear();
-		for (auto& treeChild : this->children) {
-			// Если у детей одинаковые имена, вычислить их разность
-			if (treeChild->getName() == cmpTreeChild->getName()) {
-				curDelta = treeChild->cmpNodes(cmpTreeChild.get());
-				similarTrees.push_back(make_pair(curDelta, treeChild.get()));
-			}
-		}
-		if (similarTrees.empty()) {
-			curDelta = -1;
-			similarTrees.push_back(make_pair(curDelta, nullptr));
-		}
-		// Соотнести вычисленные разности каждого поддерева сравниваемого дерева
-		// и текущее поддерево главного дерева
-		if (patch.find(cmpTreeChild.get()) != patch.end()) {
-			vector<pair<int, Node*>>& existingVector = patch[cmpTreeChild.get()];
-			vector<pair<int, Node*>> newElements = similarTrees;
-			existingVector.insert(existingVector.end(), newElements.begin(), newElements.end());
-		}
-		else {
-			// curTreeNode отсутствует в словаре patch, создаем новую запись
-			patch[cmpTreeChild.get()] = similarTrees;
-		}
-	}
-
-	for (auto& cmpTreeChild : cmpTree->children) {
-		curDelta += cmpTreeChild->findMinDeltaPatch(patch).first;
-	}
-
-	return curDelta;
+	this->relPatch = newPatchNode;
 }
-*/
 
+PatchNode* Node::getRelPatch() const
+{
+	return this->relPatch;
+}
 
+int Node::buildPatch(Node* cmpTree, Patch* generalPatch) const
+{
+	int curConnectionDelta;
+	int sumConnectionDelta = 0;
+	std::unique_ptr<PatchNode> curPatch;
+	std::unique_ptr<PatchConnection> curConnection;
 
+	for (auto& mainChild : this->children) {
+		curPatch = make_unique<PatchNode>(mainChild.get());
+		mainChild->setPatchNode(curPatch.get());
+		for (auto& cmpChild : cmpTree->children) {
+			if (mainChild->getName() == cmpChild->getName()) {
+				curConnection = make_unique<PatchConnection>(cmpChild.get());
 
+				if (mainChild->isLeaf() && cmpChild->isLeaf()) {
+					curConnectionDelta = 0;
+				}
+				else if (mainChild->isLeaf() && cmpChild->isNode()) {
+					curConnectionDelta = cmpChild->descendantsCount();
+				}
+				else if (mainChild->isNode() && cmpChild->isLeaf()) {
+					curConnectionDelta = -1;
+				}
+				else if(mainChild->isNode() && cmpChild->isNode()) {
+					curConnectionDelta = mainChild->buildPatch(cmpChild.get(), generalPatch);
+				}
+				else {
+					continue;
+				}
+
+				curConnection->setWeight(curConnectionDelta);
+				curPatch->addConnection(move(curConnection));
+			}
+
+		}
+		if (curPatch->getConnections().size() == 0) {
+			return -1;
+		}
+		generalPatch->addNode(move(curPatch));
+	}
+	sumConnectionDelta += generalPatch->countDeltaNodes(cmpTree, this);
+	return sumConnectionDelta;
+}
 
 string Node::getName() const
 {
@@ -148,6 +138,85 @@ void Node::print(int level) const
 	}
 }
 
+bool Node::isDescendant(Node* searchedNode) const 
+{
+	if (this == searchedNode)
+		return true;
+
+	for (auto& child : children) {
+		if (child->isDescendant(searchedNode))
+			return true;
+	}
+
+	return false;
+}
+
+int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const 
+{
+	unique_ptr<Patch> patch = make_unique<Patch>();
+	int minPatch = this->buildPatch(cmpTree, patch.get());
+
+	if (minPatch == -1)
+		return -1;
+
+	deltaTree = make_unique<Node>(this->getName());
+	minPatch = this->buildDeltaTree(deltaTree.get(), patch.get());
+	return minPatch;
+}
+
+int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const 
+{
+	Node* addedChild = nullptr;
+	int nodesAdded = 0;
+	// Р”Р»СЏ РєР°Р¶РґРѕРіРѕ СЂРµР±С‘РЅРєР° РґР°РЅРЅРѕРіРѕ СѓР·Р»Р°
+	for (auto& mainChild : this->children) {
+		PatchConnection* curMinPatchConnection = mainChild->getMinPatchConnection();
+
+		if (curMinPatchConnection != nullptr) {
+			// Р•СЃР»Рё patch РґР»СЏ С‚РµРєСѓС‰РµРіРѕ СЂРµР±С‘РЅРєР° РЅРµРЅСѓР»РµРІРѕР№, СЃС‚СЂРѕРёРј РґРµСЂРµРІРѕ СЂР°Р·РЅРѕСЃС‚Рё РґР°Р»РµРµ РІРіР»СѓР±СЊ 
+			// Р•СЃР»Рё patch РЅСѓР»РµРІРѕР№, С‚Рѕ РЅРµ РґРѕР±Р°РІР»СЏРµРј СЌС‚РѕРіРѕ СЂРµР±С‘РЅРєР°
+			if (!(curMinPatchConnection == 0)) {
+				nodesAdded++;
+				addedChild = deltaTree->addChild(mainChild->name);
+				mainChild->buildDeltaTree(addedChild, generalPatch); 
+			}
+			else {
+				nodesAdded += mainChild->descendantsCount() + 1;
+			}
+			
+			// РЈРґР°Р»РёС‚СЊ РІСЃРµ СЃРѕРµРґРёРЅРµРЅРёСЏ, РєРѕС‚РѕСЂС‹Рµ СѓРєР°Р·С‹РІР°СЋС‚ РЅР° С‚РµРєСѓС‰РµРіРѕ СЂРµР±РµРЅРєР° РІ СЃСЂР°РІРЅРёРІР°РµРјРѕРј РґРµСЂРµРІРµ
+			generalPatch->deleteAllReferences(mainChild.get());
+			
+		}
+	}
+	return nodesAdded;
+
+}
+
+PatchConnection* Node::getMinPatchConnection()
+{
+	auto connections = this->relPatch->getConnections();
+	if (connections.size() == 0)
+		return nullptr;
+
+	PatchConnection* minCon = connections[0];
+	for (auto& curCon : connections) {
+		int curWeight = curCon->getWeight();
+		if (curWeight < minCon->getWeight() && curWeight != -1) {
+			minCon = curCon;
+		}
+	}
+
+	if (minCon->getWeight() != -1)
+		return minCon;
+	else
+		return nullptr;
+}
+
+
+
+
+
 PatchNode::PatchNode()
 {
 	this->rootSubTree = nullptr;
@@ -157,6 +226,43 @@ PatchNode::PatchNode(Node* rootSubTree)
 {
 	this->rootSubTree = rootSubTree;
 }
+
+void PatchNode::addConnection(unique_ptr<PatchConnection> newConnection)
+{
+	this->connections.push_back(move(newConnection));
+}
+
+void PatchNode::addConnection(int weight, Node* searchedSubTree)
+{
+	auto newConnection = make_unique<PatchConnection>(weight, searchedSubTree);
+	this->connections.push_back(move(newConnection));
+}
+
+Node* PatchNode::getRoot()
+{
+	return this->rootSubTree;
+}
+
+int PatchNode::validConnectionsCount()
+{
+	int count = 0;
+	for (auto& con : this->getConnections()) {
+		if (con->getWeight() >= 0)
+			count++;
+	}
+	return count;
+}
+
+vector<PatchConnection*> PatchNode::getConnections()
+{
+	vector<PatchConnection*> cons;
+	for (auto& connection : this->connections) {
+		cons.push_back(connection.get());
+	}
+	return cons;
+}
+
+
 
 PatchConnection::PatchConnection(Node* searchedSubTree) {
 	this->searchedSubTree = searchedSubTree;
@@ -183,27 +289,114 @@ Node* PatchConnection::getSearchedSubTree()
 	return this->searchedSubTree;
 }
 
-void PatchNode::addConnection(unique_ptr<PatchConnection> newConnection)
-{
-	this->connections.push_back(move(newConnection));
+
+Patch::Patch() {
+	this->patchNodes.clear();
 }
 
-void PatchNode::addConnection(int weight, Node* searchedSubTree)
+vector<PatchNode*> Patch::getPatch() const
 {
-	auto newConnection = make_unique<PatchConnection>(weight, searchedSubTree);
-	this->connections.push_back(move(newConnection));
+	vector<PatchNode*> patch;
+	for (auto& patchNode : this->patchNodes) {
+		patch.push_back(patchNode.get());
+	}
+	return patch;
 }
 
-vector<unique_ptr<PatchConnection>> PatchNode::getConnections()
+void Patch::deleteAllReferences(const Node* excludedNode) 
 {
-	return move(this->connections);
+	vector<PatchConnection*> curCons;
+	for (auto patchIter = this->patchNodes.begin(); patchIter < this->patchNodes.end(); ) {
+		curCons = (*patchIter)->getConnections();
+
+		// РЈРґР°Р»РёС‚СЊ РІСЃРµ СЃРѕРµРґРёРЅРµРЅРёСЏ, СѓРєР°Р·С‹РІР°СЋС‰РёРµ РЅР° РёСЃРєР»СЋС‡Р°РµРјС‹Р№ СѓР·РµР»
+		for (auto i = curCons.begin(); i < curCons.end();) {
+			if((*i)->getSearchedSubTree() == excludedNode) {
+				i = curCons.erase(i);
+			}
+			else {
+				++i;
+			}
+		}
+
+		// РЈРґР°Р»РёС‚СЊ С‚РµРєСѓС‰РёР№ PatchNode РµСЃР»Рё РѕРЅ РЅРµ СѓРєР°Р·С‹РІР°РµС‚ РЅРё РЅР° РѕРґРёРЅ СѓР·РµР» РёСЃРєРѕРјРѕРіРѕ РґРµСЂРµРІР°
+		if ((*patchIter)->getConnections().size() == 0)
+			patchIter = this->patchNodes.erase(patchIter);
+		else
+			++patchIter;
+	}
+}
+
+void Patch::addNode(unique_ptr<PatchNode> newNode)
+{
+	this->patchNodes.push_back(move(newNode));
+}
+
+int Patch::countLeafPatches(Node* tree)
+{
+	int sum = 0;
+	for (auto& child : tree->getChildren()) {
+		for (auto& patchNode : this->patchNodes) {
+			if (patchNode->getRoot() == child && patchNode->validConnectionsCount() == 0) {
+				sum++;
+			}
+		}
+	}
+	return sum;
+}
+
+int Patch::countDeltaNodes(const Node* pointTree, const Node* sourceTree) const {
+	int sum = 0;
+	bool patchFound = false;
+	vector<pair<PatchNode*, PatchConnection*>> pointingNodes;
+
+	// Р”Р»СЏ РєР°Р¶РґРѕРіРѕ СЂРµР±РµРЅРєР° СѓР·Р»Р° СЃРјРѕС‚СЂРёРј, СѓРєР°Р·С‹РІР°РµС‚ Р»Рё РЅР° РЅРµРіРѕ РєР°РєРѕР№-С‚Рѕ Patch
+	for (auto& child : pointTree->getChildren()) {
+		patchFound = false;
+		pointingNodes = this->findPointingNode(child);
+		for (auto& ptrNode : pointingNodes) {
+			// Р•СЃР»Рё РєРѕСЂРµРЅСЊ Patch РЅР°С…РѕРґРёС‚СЃСЏ РІ РёСЃС…РѕРґРЅРѕРј РґРµСЂРµРІРµ, С‚Рѕ РїСЂРёР±Р°РІР»СЏРµРј РІРµСЃ СЃРѕРѕС‚РІРµСЃС‚РІСѓСЋС‰РµРіРѕ СЃРѕРµРґРёРЅРµРЅРёСЏ Рє РѕР±С‰РµР№ СЃСѓРјРјРµ 
+			if (sourceTree->isDescendant(ptrNode.first->getRoot())) {
+				sum += ptrNode.second->getWeight();
+				patchFound = true;
+			}
+		}
+		// Р•СЃР»Рё РґР»СЏ РґР°РЅРЅРѕРіРѕ СЂРµР±РµРЅРєР° РЅРµС‚ СЃРѕРѕС‚РІРµС‚СЃРІСѓСЋС‰РµРіРѕ Patch, С‚Рѕ РїСЂРёР±Р°РІР»СЏРµРј Рє РѕР±С‰РµРј СЃСѓРјРјРµ 1 + РєРѕР»-РІРѕ РµРіРѕ РїРѕС‚РѕРјРєРѕРІ
+		if(!patchFound)
+			sum += 1 + child->descendantsCount();
+
+	}
+
+	return sum;
+}
+
+vector<PatchNode*> Patch::findLeafPatches(Node* sourceTree ) {
+	vector<PatchNode*> leafNodes;
+	for (auto& node : this->patchNodes) {
+		if (node->getConnections().size() == 0 && sourceTree->isDescendant(node->getRoot())) {
+			leafNodes.push_back(node.get());
+		}
+	}
+	return leafNodes;
+}
+
+// РџСЂРѕРІРµСЂСЏРµС‚, РµСЃС‚СЊ Р»Рё РІ Patch СЌР»РµРјРµРЅС‚С‹(PatchNode) РєРѕС‚РѕСЂС‹Рµ СѓРєР°Р·С‹РІР°СЋС‚ РЅР° СЌС‚РѕС‚ treeNode
+vector<pair<PatchNode*, PatchConnection*>> Patch::findPointingNode(Node* pointNode) const {
+	vector<pair<PatchNode*, PatchConnection*>> pointingNodes;
+	vector<PatchConnection*> curCons;
+	
+	for (auto& node : this->patchNodes) {
+		curCons = node->getConnections();
+		for (auto& con : curCons) {
+			if (pointNode == con->getSearchedSubTree())
+				pointingNodes.push_back(make_pair(node.get(), con));
+		}
+	}
+
+	return pointingNodes;
 }
 
 
-Node* PatchNode::getRoot()
-{
-	return this->rootSubTree;
-}
 
 class ExcForbiddenSymbol : public std::exception
 {
@@ -215,7 +408,7 @@ public:
 
 	const char* what() const noexcept override
 	{
-		string msg = "Найден недопустимый символ \'" + to_string(symbol) + "\'" + "в файле \'" + filename + "\'";
+		string msg = "ГЌГ Г©Г¤ГҐГ­ Г­ГҐГ¤Г®ГЇГіГ±ГІГЁГ¬Г»Г© Г±ГЁГ¬ГўГ®Г« \'" + to_string(symbol) + "\'" + "Гў ГґГ Г©Г«ГҐ \'" + filename + "\'";
 		return msg.c_str();
 	}
 
@@ -233,7 +426,7 @@ class ExcSeveralTrees : public std::exception
 public:
 	const char* what() const noexcept override
 	{
-		string msg = "В файле \'" + filename + "\'" + "содержится более 1 дерева";
+		string msg = "Г‚ ГґГ Г©Г«ГҐ \'" + filename + "\'" + "Г±Г®Г¤ГҐГ°Г¦ГЁГІГ±Гї ГЎГ®Г«ГҐГҐ 1 Г¤ГҐГ°ГҐГўГ ";
 		return msg.c_str();
 	}
 protected:
@@ -270,31 +463,33 @@ protected:
 	string nodeName;
 };
 
+
+
 bool readFile(string path, string* content)
 {
 	bool success = false;
 	string line;
 
-	ifstream in(path); // окрываем файл для чтения
+	ifstream in(path); // Г®ГЄГ°Г»ГўГ ГҐГ¬ ГґГ Г©Г« Г¤Г«Гї Г·ГІГҐГ­ГЁГї
 	if (in.is_open())
 	{
-		// считываем текстовый файл и записываем его в одну строку
+		// Г±Г·ГЁГІГ»ГўГ ГҐГ¬ ГІГҐГЄГ±ГІГ®ГўГ»Г© ГґГ Г©Г« ГЁ Г§Г ГЇГЁГ±Г»ГўГ ГҐГ¬ ГҐГЈГ® Гў Г®Г¤Г­Гі Г±ГІГ°Г®ГЄГі
 		while (getline(in, line))
 		{
 			*content += line;
 		}
 		success = true;
 	}
-	in.close();     // закрываем файл
+	in.close();     // Г§Г ГЄГ°Г»ГўГ ГҐГ¬ ГґГ Г©Г«
 	return success;
 }
 
 string extractWord(string str, unsigned startIndex, string delimiters)
 {
-	// Найти первое вхождение одного из разделителей
+	// ГЌГ Г©ГІГЁ ГЇГҐГ°ГўГ®ГҐ ГўГµГ®Г¦Г¤ГҐГ­ГЁГҐ Г®Г¤Г­Г®ГЈГ® ГЁГ§ Г°Г Г§Г¤ГҐГ«ГЁГІГҐГ«ГҐГ©
 	int word_end = str.find_first_of(delimiters, startIndex);
 
-	// Считать, что слово кончилось, когда встречен первый разделитель
+	// Г‘Г·ГЁГІГ ГІГј, Г·ГІГ® Г±Г«Г®ГўГ® ГЄГ®Г­Г·ГЁГ«Г®Г±Гј, ГЄГ®ГЈГ¤Г  ГўГ±ГІГ°ГҐГ·ГҐГ­ ГЇГҐГ°ГўГ»Г© Г°Г Г§Г¤ГҐГ«ГЁГІГҐГ«Гј
 	return str.substr(startIndex, word_end - startIndex);
 }
 
@@ -358,12 +553,39 @@ unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, in
 	return sexpToTree(lexems, startIndex);
 }
 
+void generateDotFile(const Node* node, std::ofstream& file) {
+	static int counter = 0;
+	int current = counter++;
+
+	file << "node" << current << " [label=\"" << node->getName() << "\"];" << std::endl;
+
+	const std::vector<Node*>& children = node->getChildren();
+	for (const auto& child : children) {
+		int childNode = counter;
+		generateDotFile(child, file);
+		file << "node" << current << " -> node" << childNode << ";" << std::endl;
+	}
+}
+
+void visualizeTree(const Node* root) {
+	std::ofstream file("tree.dot");
+	file << "digraph Tree {" << std::endl;
+	generateDotFile(root, file);
+	file << "}" << std::endl;
+	file.close();
+
+	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o tree.png";
+	system(command.c_str());
+
+	std::cout << "Tree visualization generated: tree.png" << std::endl;
+}
+
 int main()
 {
-	setlocale(LC_ALL, "Russian");
+	setlocale(LC_ALL, "ru_RU.UTF-8");
 	string content;
 	string path{ R"(C:\Users\barten\Documents\eztree.txt)" };
-
+	 
 	readFile(path, &content);
 	string delimiters = "() \t\n\r";
 	cout << content << endl;
@@ -371,23 +593,38 @@ int main()
 	//string c1 = "1(2(3 4) 5(6(7) 8) 9)";
 	//string c2 = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
 
-	string c1 = "1(3(5 6) 3(5(7) 6) 4)";
+	string c1 = "1(3(5 6) 3(5(7) 6) 3(5 7))";
 	string c2 = "1(3(5(7 8) 6) 3(5(7) 6) 4)";
+
+	// string c1 = "tractor(steering wheel (right_half left_half) who)";
+	// string c2 = "tractor(steering wheel (right_half left_half) who)";
 
 	auto tree1 = parseOnTree(c1, delimiters);
 	auto tree2 = parseOnTree(c2, delimiters);
+	unique_ptr<Node> deltaTree;
+	/*
+	auto patch = make_unique<Patch>();
 
-	vector<unique_ptr<PatchNode>> patchNodes;
-	cout << tree1->buildPatch(tree2.get(), patchNodes) << endl;
+	cout << tree1->buildPatch(tree2.get(), patch.get()) << endl;
 
-	for (auto& el : patchNodes) {
+	for (auto& el : patch->getPatch()) {
 		cout << "For root " + el->getRoot()->getName() << endl;
 		cout << "\t Connections:" << endl;
-		vector<unique_ptr<PatchConnection>>curConnections = el->getConnections();
-		for (auto& con : curConnections) {
-			cout << "\t\t Weight is " << con->getWeight() << " comparing with " << con->getSearchedSubTree()->getName() << endl;
+		auto curConnections = el->getConnections();
+		if (curConnections.size() == 0) {
+			cout << "\t\tJust no connections!!!" << endl;
 		}
+		for (auto& con : curConnections) {
+			if (con->getWeight() != -1)
+				cout << "\t\t Weight is " << con->getWeight() << " comparing with " << con->getSearchedSubTree()->getName() << endl;
+			else
+				cout << "\t\t Weigth is " << con->getWeight() << endl;
+		}
+		
 	}
+	*/
+	cout << tree1->buildDeltaTreeWrap(tree2.get(), deltaTree) << endl;
+	deltaTree->print();
+	visualizeTree(deltaTree.get());
+
 }
-
-
