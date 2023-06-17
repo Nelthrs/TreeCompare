@@ -43,7 +43,9 @@ public:
 	PatchNode* getRelPatch() const;
 	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const;
 	int buildDeltaTree(Node* deltaTree, Patch* generalPatch) const;
+	Node* getMirrorNode(Patch* generalPatch) const;
 	PatchConnection* getMinPatchConnection();
+	vector<pair<PatchConnection*, PatchNode*>> getIncomingConnections(Patch* generalPatch);
 protected:
 	string name;
 	vector<unique_ptr<Node>> children;

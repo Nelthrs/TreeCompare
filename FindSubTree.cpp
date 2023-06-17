@@ -160,28 +160,34 @@ int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const
 		return -1;
 
 	deltaTree = make_unique<Node>(this->getName());
-	minPatch = this->buildDeltaTree(deltaTree.get(), patch.get());
+	minPatch = cmpTree->buildDeltaTree(deltaTree.get(), patch.get());
 	return minPatch;
 }
 
+/*
 int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const 
 {
 	Node* addedChild = nullptr;
 	int nodesAdded = 0;
 	// Для каждого ребёнка данного узла
+	// Нужно искать сначала те узлы, у которых есть минимальное совпадение
+	// Т.е сначала ищем детей у которых curMinPatchConnection = 0, потом = 1 итд
 	for (auto& mainChild : this->children) {
 		PatchConnection* curMinPatchConnection = mainChild->getMinPatchConnection();
 
 		if (curMinPatchConnection != nullptr) {
 			// Если patch для текущего ребёнка ненулевой, строим дерево разности далее вглубь 
 			// Если patch нулевой, то не добавляем этого ребёнка
-			if (!(curMinPatchConnection == 0)) {
+			if (!(curMinPatchConnection->getWeight() == 0)) {
 				nodesAdded++;
 				addedChild = deltaTree->addChild(mainChild->name);
 				mainChild->buildDeltaTree(addedChild, generalPatch); 
 			}
 			else {
 				nodesAdded += mainChild->descendantsCount() + 1;
+				for (auto& child : curMinPatchConnection->getSearchedSubTree()->children) {
+					deltaTree->addChild(child->copy());
+				}
 			}
 			
 			// Удалить все соединения, которые указывают на текущего ребенка в сравниваемом дереве
@@ -189,8 +195,54 @@ int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
 			
 		}
 	}
+	
 	return nodesAdded;
 
+}
+*/
+
+// this - cmpTree, искомое дерево!!!
+int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
+{
+	vector<pair<PatchConnection*, PatchNode*>> incomingCons;
+	pair<PatchConnection*, PatchNode*> minIncomingCon;
+	Node* addedChild;
+	int addedChildrenCount = 0;
+
+	for (auto& child : this->children) {
+		// Для ребенка из искомого дерева находим ВХОДЯЩУЮ связь с наименьшим весом
+		incomingCons = child->getIncomingConnections(generalPatch);
+		if (incomingCons.size() > 0) {
+			minIncomingCon = incomingCons[0];
+			for (auto con : incomingCons) {
+				if (minIncomingCon.first->getWeight() > con.first->getWeight())
+					minIncomingCon = con;
+			}
+
+			// Если её вес больше 0 - углубляемся 
+			if (!(minIncomingCon.first->getWeight() == 0)) {
+				addedChild = deltaTree->addChild(child->getName());
+				addedChildrenCount += 1 + child->getMirrorNode(generalPatch)->buildDeltaTree(addedChild, generalPatch);
+				generalPatch->deleteAllReferences(child.get());
+			}
+		}
+	}
+	
+	return addedChildrenCount;
+}
+
+Node* Node::getMirrorNode(Patch* generalPatch) const 
+{
+	for (auto patchNode : generalPatch->getPatch()) {
+		if (this->name == patchNode->getRoot()->getName()) {
+			for (auto con : patchNode->getConnections()) {
+				if (con->getSearchedSubTree() == this)
+					return patchNode->getRoot();
+			}
+		}
+		
+	}
+	return nullptr;
 }
 
 PatchConnection* Node::getMinPatchConnection()
@@ -211,6 +263,21 @@ PatchConnection* Node::getMinPatchConnection()
 		return minCon;
 	else
 		return nullptr;
+}
+
+vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(Patch* generalPatch)
+{
+	vector<pair<PatchConnection*, PatchNode*>> result;
+
+	for (auto patchNode : generalPatch->getPatch()) {
+		for (auto con : patchNode->getConnections()) {
+			if (con->getSearchedSubTree() == this && con->getWeight() != -1) {
+				result.push_back(make_pair(con, patchNode));
+			}
+		}
+	}
+	
+	return result;
 }
 
 
@@ -567,14 +634,14 @@ void generateDotFile(const Node* node, std::ofstream& file) {
 	}
 }
 
-void visualizeTree(const Node* root) {
+void visualizeTree(const Node* root, const string filename = "tree.png") {
 	std::ofstream file("tree.dot");
 	file << "digraph Tree {" << std::endl;
 	generateDotFile(root, file);
 	file << "}" << std::endl;
 	file.close();
 
-	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o tree.png";
+	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o " + filename;
 	system(command.c_str());
 
 	std::cout << "Tree visualization generated: tree.png" << std::endl;
@@ -593,7 +660,7 @@ int main()
 	//string c1 = "1(2(3 4) 5(6(7) 8) 9)";
 	//string c2 = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
 
-	string c1 = "1(3(5 6) 3(5(7) 6) 3(5 7))";
+	string c1 = "1(3(5 6) 3(5(7) 6) 4)";
 	string c2 = "1(3(5(7 8) 6) 3(5(7) 6) 4)";
 
 	// string c1 = "tractor(steering wheel (right_half left_half) who)";
@@ -623,8 +690,10 @@ int main()
 		
 	}
 	*/
+	visualizeTree(tree1.get(), "tree1.png");
+	visualizeTree(tree2.get(), "tree2.png");
 	cout << tree1->buildDeltaTreeWrap(tree2.get(), deltaTree) << endl;
 	deltaTree->print();
-	visualizeTree(deltaTree.get());
+	visualizeTree(deltaTree.get(), "deltaTree.png");
 
 }
