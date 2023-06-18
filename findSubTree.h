@@ -37,12 +37,13 @@ public:
 	int buildPatch(Node* cmpTree, Patch* generalPatch) const;
 	string getName() const;
 	void print(int level = 0) const;
-	bool isDescendant(Node* searchedNode) const;
+	bool isDescendant(const Node* searchedNode) const;
+	Node* findFather(const Node* desiredChild);
 	vector<Node*> getChildren() const;
 	void setPatchNode(PatchNode* newPatchNode);
 	PatchNode* getRelPatch() const;
-	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const;
-	int buildDeltaTree(Node* deltaTree, Patch* generalPatch) const;
+	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree);
+	int buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, PatchConnection* prevConnection) const;
 	Node* getMirrorNode(Patch* generalPatch) const;
 	PatchConnection* getMinPatchConnection();
 	vector<pair<PatchConnection*, PatchNode*>> getIncomingConnections(Patch* generalPatch);
@@ -56,14 +57,15 @@ unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, in
 
 class PatchConnection {
 public:
-	PatchConnection(Node* searchedSubTree);
-	PatchConnection(int weight, Node* searchedSubTree);
+	PatchConnection(int weight, Node* searchedSubTree, PatchNode* rootPatchNode);
 	void setWeight(int weight);
 	int getWeight();
 	Node* getSearchedSubTree();
+	PatchNode* getRootPatchNode();
 protected:
 	int weight;
 	Node* searchedSubTree;
+	PatchNode* rootPatchNode;
 };
 
 class PatchNode {
@@ -73,6 +75,7 @@ public:
 	void addConnection(unique_ptr<PatchConnection> newConnection);
 	void addConnection(int weight, Node* searchedSubTree);
 	vector<PatchConnection*> getConnections();
+	bool conectionsContains(PatchConnection* connection);
 	Node* getRoot();
 	int validConnectionsCount();
 protected:

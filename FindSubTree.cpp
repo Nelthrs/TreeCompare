@@ -88,8 +88,6 @@ int Node::buildPatch(Node* cmpTree, Patch* generalPatch) const
 		mainChild->setPatchNode(curPatch.get());
 		for (auto& cmpChild : cmpTree->children) {
 			if (mainChild->getName() == cmpChild->getName()) {
-				curConnection = make_unique<PatchConnection>(cmpChild.get());
-
 				if (mainChild->isLeaf() && cmpChild->isLeaf()) {
 					curConnectionDelta = 0;
 				}
@@ -102,14 +100,10 @@ int Node::buildPatch(Node* cmpTree, Patch* generalPatch) const
 				else if(mainChild->isNode() && cmpChild->isNode()) {
 					curConnectionDelta = mainChild->buildPatch(cmpChild.get(), generalPatch);
 				}
-				else {
-					continue;
-				}
 
-				curConnection->setWeight(curConnectionDelta);
+				curConnection = make_unique<PatchConnection>(curConnectionDelta, cmpChild.get(), curPatch.get());
 				curPatch->addConnection(move(curConnection));
 			}
-
 		}
 		if (curPatch->getConnections().size() == 0) {
 			return -1;
@@ -138,7 +132,7 @@ void Node::print(int level) const
 	}
 }
 
-bool Node::isDescendant(Node* searchedNode) const 
+bool Node::isDescendant(const Node* searchedNode) const 
 {
 	if (this == searchedNode)
 		return true;
@@ -151,7 +145,25 @@ bool Node::isDescendant(Node* searchedNode) const
 	return false;
 }
 
-int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const 
+// Поиск в дереве this отца для узла treeNode
+Node* Node::findFather(const Node* desiredChild)
+{
+	Node* father;
+	for (auto& child : this->children) {
+		if (child.get() == desiredChild) {
+			return this;
+		}
+	}
+	for (auto& child : this->children) {
+		father = child->findFather(desiredChild);
+		if (father != nullptr) {
+			return father;
+		}
+	}
+	return nullptr;
+}
+
+int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
 {
 	unique_ptr<Patch> patch = make_unique<Patch>();
 	int minPatch = this->buildPatch(cmpTree, patch.get());
@@ -160,7 +172,7 @@ int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const
 		return -1;
 
 	deltaTree = make_unique<Node>(this->getName());
-	minPatch = cmpTree->buildDeltaTree(deltaTree.get(), patch.get());
+	minPatch = cmpTree->buildDeltaTree(this, deltaTree.get(), patch.get());
 	return minPatch;
 }
 
@@ -202,7 +214,8 @@ int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
 */
 
 // this - cmpTree, искомое дерево!!!
-int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
+
+int Node::buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, PatchConnection* prevConnection = nullptr) const
 {
 	vector<pair<PatchConnection*, PatchNode*>> incomingCons;
 	pair<PatchConnection*, PatchNode*> minIncomingCon;
@@ -210,8 +223,23 @@ int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
 	int addedChildrenCount = 0;
 
 	for (auto& child : this->children) {
-		// Для ребенка из искомого дерева находим ВХОДЯЩУЮ связь с наименьшим весом
-		incomingCons = child->getIncomingConnections(generalPatch);
+		// Для ребенка из искомого дерева находим ВХОДЯЩУЮ связь с наименьшим весом которая принадлежит тому же поддереву, что и this
+		incomingCons = child->getIncomingConnections(generalPatch); // Получаем все входящие соединения к текущему узлу из разных patchNode
+		// Для каждого соединения проверяем, относится ли оно к тому же поддереву
+		for (auto conIter = incomingCons.begin(); conIter < incomingCons.end(); ) {
+			auto cmpNode = (*conIter).second->getRoot();				// Получаем узел из mainTree, от которого идет Patch
+			auto cmpNodeFather = mainTree->findFather(cmpNode);			// Находим в mainTree родителя этого узла
+			// if cmpNodeFather == nullptr?								
+
+			// Если из patch родительского узла не выходит предыдущее соединение, значит 
+			if (cmpNodeFather->getRelPatch()->conectionsContains(prevConnection)) {
+				++conIter;
+			}
+			else {
+				conIter = incomingCons.erase(conIter);
+			}
+		}
+
 		if (incomingCons.size() > 0) {
 			minIncomingCon = incomingCons[0];
 			for (auto con : incomingCons) {
@@ -220,11 +248,16 @@ int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
 			}
 
 			// Если её вес больше 0 - углубляемся 
-			if (!(minIncomingCon.first->getWeight() == 0)) {
+			if (minIncomingCon.first->getWeight() > 0) {
 				addedChild = deltaTree->addChild(child->getName());
-				addedChildrenCount += 1 + child->getMirrorNode(generalPatch)->buildDeltaTree(addedChild, generalPatch);
+				prevConnection = minIncomingCon.first;
+				addedChildrenCount += 1 + child->buildDeltaTree(mainTree, addedChild, generalPatch, prevConnection);
 				generalPatch->deleteAllReferences(child.get());
 			}
+		}
+		else {
+			deltaTree->addChild(child->copy());
+			addedChildrenCount += 1 + child->descendantsCount();
 		}
 	}
 	
@@ -301,7 +334,7 @@ void PatchNode::addConnection(unique_ptr<PatchConnection> newConnection)
 
 void PatchNode::addConnection(int weight, Node* searchedSubTree)
 {
-	auto newConnection = make_unique<PatchConnection>(weight, searchedSubTree);
+	auto newConnection = make_unique<PatchConnection>(weight, searchedSubTree, this);
 	this->connections.push_back(move(newConnection));
 }
 
@@ -329,17 +362,24 @@ vector<PatchConnection*> PatchNode::getConnections()
 	return cons;
 }
 
-
-
-PatchConnection::PatchConnection(Node* searchedSubTree) {
-	this->searchedSubTree = searchedSubTree;
-	this->weight = -2;
+bool PatchNode::conectionsContains(PatchConnection* connection)
+{
+	for (auto& con : this->connections) {
+		if (con.get() == connection)
+			return true;
+	}
+	return false;
 }
 
-PatchConnection::PatchConnection(int weight, Node* searchedSubTree)
+
+
+
+
+PatchConnection::PatchConnection(int weight, Node* searchedSubTree, PatchNode* rootPatchNode)
 {
 	this->weight = weight;
 	this->searchedSubTree = searchedSubTree;
+	this->rootPatchNode = rootPatchNode;
 }
 
 void PatchConnection::setWeight(int weight) {
@@ -354,6 +394,11 @@ int PatchConnection::getWeight()
 Node* PatchConnection::getSearchedSubTree()
 {
 	return this->searchedSubTree;
+}
+
+PatchNode* PatchConnection::getRootPatchNode()
+{
+	return this->rootPatchNode;
 }
 
 
@@ -644,7 +689,7 @@ void visualizeTree(const Node* root, const string filename = "tree.png") {
 	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o " + filename;
 	system(command.c_str());
 
-	std::cout << "Tree visualization generated: tree.png" << std::endl;
+	std::cout << "Tree visualization generated: " + filename << std::endl;
 }
 
 int main()
