@@ -145,63 +145,6 @@ bool Node::isDescendant(const Node* searchedNode) const
 	return false;
 }
 
-// Поиск в дереве this отца для узла treeNode
-Node* Node::findFather(const Node* desiredChild)
-{
-	Node* father;
-	for (auto& child : this->children) {
-		if (child.get() == desiredChild) {
-			return this;
-		}
-	}
-	for (auto& child : this->children) {
-		father = child->findFather(desiredChild);
-		if (father != nullptr) {
-			return father;
-		}
-	}
-	return nullptr;
-}
-
-
-
-/*
-int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const 
-{
-	Node* addedChild = nullptr;
-	int nodesAdded = 0;
-	// Для каждого ребёнка данного узла
-	// Нужно искать сначала те узлы, у которых есть минимальное совпадение
-	// Т.е сначала ищем детей у которых curMinPatchConnection = 0, потом = 1 итд
-	for (auto& mainChild : this->children) {
-		PatchConnection* curMinPatchConnection = mainChild->getMinPatchConnection();
-
-		if (curMinPatchConnection != nullptr) {
-			// Если patch для текущего ребёнка ненулевой, строим дерево разности далее вглубь 
-			// Если patch нулевой, то не добавляем этого ребёнка
-			if (!(curMinPatchConnection->getWeight() == 0)) {
-				nodesAdded++;
-				addedChild = deltaTree->addChild(mainChild->name);
-				mainChild->buildDeltaTree(addedChild, generalPatch); 
-			}
-			else {
-				nodesAdded += mainChild->descendantsCount() + 1;
-				for (auto& child : curMinPatchConnection->getSearchedSubTree()->children) {
-					deltaTree->addChild(child->copy());
-				}
-			}
-			
-			// Удалить все соединения, которые указывают на текущего ребенка в сравниваемом дереве
-			generalPatch->deleteAllReferences(mainChild.get());
-			
-		}
-	}
-	
-	return nodesAdded;
-
-}
-*/
-
 vector<PatchConnection*> Node::getConnectionsForChildren(Patch* generalPatch) {
 	vector<PatchConnection*> connections;
 	for (auto patchNode : generalPatch->getPatch()) {
@@ -293,93 +236,6 @@ int Node::buildDeltaTree(Patch* generalPatch) {
 	}
 }
 
-
-/*
-int Node::buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, PatchConnection* prevConnection = nullptr) const
-{
-	vector<pair<PatchConnection*, PatchNode*>> incomingCons;
-	pair<PatchConnection*, PatchNode*> minIncomingCon;
-	Node* addedChild;
-	int addedChildrenCount = 0;
-
-	for (auto& child : this->children) {
-		// Для ребенка из искомого дерева находим ВХОДЯЩУЮ связь с наименьшим весом которая принадлежит тому же поддереву, что и this
-		incomingCons = child->getIncomingConnections(generalPatch); // Получаем все входящие соединения к текущему узлу из разных patchNode
-		// Для каждого соединения проверяем, относится ли оно к тому же поддереву
-		for (auto conIter = incomingCons.begin(); conIter < incomingCons.end(); ) {
-			auto cmpNode = (*conIter).second->getRoot();				// Получаем узел из mainTree, от которого идет Patch
-			auto cmpNodeFather = mainTree->findFather(cmpNode);			// Находим в mainTree родителя этого узла
-			// if cmpNodeFather == nullptr?								
-
-			// Если из patch родительского узла не выходит предыдущее соединение, значит 
-			if (cmpNodeFather->getRelPatch()->conectionsContains(prevConnection)) {
-				++conIter;
-			}
-			else {
-				conIter = incomingCons.erase(conIter);
-			}
-		}
-
-		if (incomingCons.size() > 0) {
-			minIncomingCon = incomingCons[0];
-			for (auto con : incomingCons) {
-				if (minIncomingCon.first->getWeight() > con.first->getWeight())
-					minIncomingCon = con;
-			}
-
-			// Если её вес больше 0 - углубляемся 
-			if (minIncomingCon.first->getWeight() > 0) {
-				addedChild = deltaTree->addChild(child->getName());
-				prevConnection = minIncomingCon.first;
-				addedChildrenCount += 1 + child->buildDeltaTree(mainTree, addedChild, generalPatch, prevConnection);
-				generalPatch->deleteAllReferences(child.get());
-			}
-		}
-		else {
-			deltaTree->addChild(child->copy());
-			addedChildrenCount += 1 + child->descendantsCount();
-		}
-	}
-	
-	return addedChildrenCount;
-}
-*/
-
-
-Node* Node::getMirrorNode(Patch* generalPatch) const 
-{
-	for (auto patchNode : generalPatch->getPatch()) {
-		if (this->name == patchNode->getRoot()->getName()) {
-			for (auto con : patchNode->getConnections()) {
-				if (con->getSearchedSubTree() == this)
-					return patchNode->getRoot();
-			}
-		}
-		
-	}
-	return nullptr;
-}
-
-PatchConnection* Node::getMinPatchConnection()
-{
-	auto connections = this->relPatch->getConnections();
-	if (connections.size() == 0)
-		return nullptr;
-
-	PatchConnection* minCon = connections[0];
-	for (auto& curCon : connections) {
-		int curWeight = curCon->getWeight();
-		if (curWeight < minCon->getWeight() && curWeight != -1) {
-			minCon = curCon;
-		}
-	}
-
-	if (minCon->getWeight() != -1)
-		return minCon;
-	else
-		return nullptr;
-}
-
 vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(Patch* generalPatch)
 {
 	vector<pair<PatchConnection*, PatchNode*>> result;
@@ -404,7 +260,6 @@ void Node::removeChild(Node* nodeToDelete)
 		}		
 	}
 }
-
 
 
 
@@ -435,16 +290,6 @@ Node* PatchNode::getRoot()
 	return this->rootSubTree;
 }
 
-int PatchNode::validConnectionsCount()
-{
-	int count = 0;
-	for (auto& con : this->getConnections()) {
-		if (con->getWeight() >= 0)
-			count++;
-	}
-	return count;
-}
-
 void PatchNode::addChild(unique_ptr<PatchNode> child)
 {
 	children.push_back(move(child));
@@ -458,16 +303,6 @@ vector<PatchConnection*> PatchNode::getConnections()
 	}
 	return cons;
 }
-
-bool PatchNode::conectionsContains(PatchConnection* connection)
-{
-	for (auto& con : this->connections) {
-		if (con.get() == connection)
-			return true;
-	}
-	return false;
-}
-
 
 
 
@@ -497,6 +332,7 @@ PatchNode* PatchConnection::getRootPatchNode()
 {
 	return this->rootPatchNode;
 }
+
 
 
 Patch::Patch() {
@@ -539,19 +375,6 @@ void Patch::deleteAllReferences(const Node* excludedNode)
 void Patch::addNode(unique_ptr<PatchNode> newNode)
 {
 	this->patchNodes.push_back(move(newNode));
-}
-
-int Patch::countLeafPatches(Node* tree)
-{
-	int sum = 0;
-	for (auto& child : tree->getChildren()) {
-		for (auto& patchNode : this->patchNodes) {
-			if (patchNode->getRoot() == child && patchNode->validConnectionsCount() == 0) {
-				sum++;
-			}
-		}
-	}
-	return sum;
 }
 
 int Patch::countDeltaNodes(const Node* pointTree, const Node* sourceTree) const {
@@ -819,35 +642,3 @@ int main()
 	visualizeTree(tree2.get(), "deltaTree.png");
 
 }
-
-/* Построить deltaTree
-Для каждого соединения, которое указывает на любого ребёнка текущего узла:
-	Найти самое легкое соединение
-	Если соединение найдено{
-		Если его вес > 0 {
-			Добавить к родителю узел, на который указывает соединение
-			Найти минимальное deltaTree для добавленного узла, в PatchTree перейти в соответствующего ребёнка также	
-		}
-		Если его вес == -1, считать невозможным построение deltaTree
-		Удалить это соединение
-	}
-	
-
-
-*/
-
-/* Найти самое легкое соединение
-
-Считать первое найденное соедине
-Для каждого ребёнка текущего Patch {
-	Для каждого соединения текущего ребенка {
-		
-	}
-}
-
-*/
-
-
-
-
-
