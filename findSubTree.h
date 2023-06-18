@@ -9,6 +9,7 @@
 #include <set>
 #include <map>
 #include <algorithm>
+#include <optional>
 using namespace std;
 
 
@@ -43,10 +44,16 @@ public:
 	void setPatchNode(PatchNode* newPatchNode);
 	PatchNode* getRelPatch() const;
 	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree);
+	vector<PatchConnection*> getConnectionsForChildren(Patch* generalPatch);
+	PatchConnection* getMinValidConnection(vector<PatchConnection*> connections);
+	std::optional<vector<pair<Node*, PatchConnection*>>> getMinConnectionPairs(Patch* generalPatch);
+	int buildDeltaTree(Patch* generalPatch);
 	int buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, PatchConnection* prevConnection) const;
 	Node* getMirrorNode(Patch* generalPatch) const;
 	PatchConnection* getMinPatchConnection();
 	vector<pair<PatchConnection*, PatchNode*>> getIncomingConnections(Patch* generalPatch);
+	void removeChild(Node* nodeToDelete);
+
 protected:
 	string name;
 	vector<unique_ptr<Node>> children;
@@ -78,9 +85,11 @@ public:
 	bool conectionsContains(PatchConnection* connection);
 	Node* getRoot();
 	int validConnectionsCount();
+	void addChild(unique_ptr<PatchNode> child);
 protected:
 	Node* rootSubTree;
 	vector<unique_ptr<PatchConnection>> connections;
+	vector<unique_ptr<PatchNode>> children;
 };
 
 class Patch {

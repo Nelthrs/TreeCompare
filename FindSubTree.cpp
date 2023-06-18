@@ -163,18 +163,7 @@ Node* Node::findFather(const Node* desiredChild)
 	return nullptr;
 }
 
-int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
-{
-	unique_ptr<Patch> patch = make_unique<Patch>();
-	int minPatch = this->buildPatch(cmpTree, patch.get());
 
-	if (minPatch == -1)
-		return -1;
-
-	deltaTree = make_unique<Node>(this->getName());
-	minPatch = cmpTree->buildDeltaTree(this, deltaTree.get(), patch.get());
-	return minPatch;
-}
 
 /*
 int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const 
@@ -213,8 +202,99 @@ int Node::buildDeltaTree(Node* deltaTree, Patch* generalPatch) const
 }
 */
 
-// this - cmpTree, искомое дерево!!!
+vector<PatchConnection*> Node::getConnectionsForChildren(Patch* generalPatch) {
+	vector<PatchConnection*> connections;
+	for (auto patchNode : generalPatch->getPatch()) {
+		for (auto con : patchNode->getConnections()) {
+			for (auto& child : this->children) {
+				if (con->getSearchedSubTree() == child.get())
+					connections.push_back(con);
+			}
+		}
+	}
+	return connections;
+}
 
+// Найти минимальное валидное(не == -1) соединение, входящее в this
+PatchConnection* Node::getMinValidConnection(vector<PatchConnection*> connections) 
+{
+	if (connections.size() < 1) {
+		return nullptr;
+	}
+
+	PatchConnection* minCon = connections[0];
+	for (auto con : connections) {
+		if (minCon->getWeight() > con->getWeight() || minCon->getWeight() == -1)
+			minCon = con;
+	}
+
+	return minCon;
+}
+
+bool compareByWeight(PatchConnection* conn1, PatchConnection* conn2) 
+{
+	return conn1->getWeight() < conn2->getWeight();
+}
+
+std::optional<vector<pair<Node*, PatchConnection*>>> Node::getMinConnectionPairs(Patch* generalPatch)
+{
+	auto connections = this->getConnectionsForChildren(generalPatch);
+	std::sort(connections.begin(), connections.end(), compareByWeight);
+	set<Node*> sortedChildren;												// Отсортированные дети в порядке возрастания весов входящих соединений
+	pair<set<Node*>::iterator, bool> insertionResult;
+	
+	vector<pair<Node*, PatchConnection*>> conPairs;
+
+	for (auto& con : connections) {
+		if (con->getWeight() != -1) {
+			insertionResult = sortedChildren.insert(con->getSearchedSubTree());
+			if (insertionResult.second) {
+				conPairs.push_back(make_pair(con->getSearchedSubTree(), con));
+			}
+		}
+			
+	}
+
+	if (sortedChildren.size() != this->children.size()) {
+		return nullopt;
+	}
+
+	return move(conPairs);
+}
+
+int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
+{
+	unique_ptr<Patch> patch = make_unique<Patch>();
+	int minPatch = this->buildPatch(cmpTree, patch.get());
+
+	if (minPatch == -1)
+		return -1;
+
+	deltaTree = make_unique<Node>(this->getName());
+	minPatch = cmpTree->buildDeltaTree(patch.get());
+	return minPatch;
+}
+
+int Node::buildDeltaTree(Patch* generalPatch) {
+	auto minAddPairs = this->getMinConnectionPairs(generalPatch);
+
+	if (!minAddPairs.has_value())
+		return -1;
+
+	for (auto& pair : minAddPairs.value()) {
+		generalPatch->deleteAllReferences(pair.first);
+		if (pair.second->getWeight() == 0) {
+			this->removeChild(pair.first);
+		}
+		else {
+			pair.first->buildDeltaTree(generalPatch);
+		}
+
+	}
+}
+
+
+/*
 int Node::buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, PatchConnection* prevConnection = nullptr) const
 {
 	vector<pair<PatchConnection*, PatchNode*>> incomingCons;
@@ -263,6 +343,8 @@ int Node::buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, P
 	
 	return addedChildrenCount;
 }
+*/
+
 
 Node* Node::getMirrorNode(Patch* generalPatch) const 
 {
@@ -313,6 +395,16 @@ vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(Patch* g
 	return result;
 }
 
+void Node::removeChild(Node* nodeToDelete)
+{
+	for (auto it = children.begin(); it < children.end(); ++it) {
+		if (nodeToDelete == (*it).get()) {
+			children.erase(it);
+			return;
+		}		
+	}
+}
+
 
 
 
@@ -351,6 +443,11 @@ int PatchNode::validConnectionsCount()
 			count++;
 	}
 	return count;
+}
+
+void PatchNode::addChild(unique_ptr<PatchNode> child)
+{
+	children.push_back(move(child));
 }
 
 vector<PatchConnection*> PatchNode::getConnections()
@@ -714,31 +811,43 @@ int main()
 	auto tree1 = parseOnTree(c1, delimiters);
 	auto tree2 = parseOnTree(c2, delimiters);
 	unique_ptr<Node> deltaTree;
-	/*
-	auto patch = make_unique<Patch>();
 
-	cout << tree1->buildPatch(tree2.get(), patch.get()) << endl;
-
-	for (auto& el : patch->getPatch()) {
-		cout << "For root " + el->getRoot()->getName() << endl;
-		cout << "\t Connections:" << endl;
-		auto curConnections = el->getConnections();
-		if (curConnections.size() == 0) {
-			cout << "\t\tJust no connections!!!" << endl;
-		}
-		for (auto& con : curConnections) {
-			if (con->getWeight() != -1)
-				cout << "\t\t Weight is " << con->getWeight() << " comparing with " << con->getSearchedSubTree()->getName() << endl;
-			else
-				cout << "\t\t Weigth is " << con->getWeight() << endl;
-		}
-		
-	}
-	*/
 	visualizeTree(tree1.get(), "tree1.png");
 	visualizeTree(tree2.get(), "tree2.png");
 	cout << tree1->buildDeltaTreeWrap(tree2.get(), deltaTree) << endl;
 	deltaTree->print();
-	visualizeTree(deltaTree.get(), "deltaTree.png");
+	visualizeTree(tree2.get(), "deltaTree.png");
 
 }
+
+/* Построить deltaTree
+Для каждого соединения, которое указывает на любого ребёнка текущего узла:
+	Найти самое легкое соединение
+	Если соединение найдено{
+		Если его вес > 0 {
+			Добавить к родителю узел, на который указывает соединение
+			Найти минимальное deltaTree для добавленного узла, в PatchTree перейти в соответствующего ребёнка также	
+		}
+		Если его вес == -1, считать невозможным построение deltaTree
+		Удалить это соединение
+	}
+	
+
+
+*/
+
+/* Найти самое легкое соединение
+
+Считать первое найденное соедине
+Для каждого ребёнка текущего Patch {
+	Для каждого соединения текущего ребенка {
+		
+	}
+}
+
+*/
+
+
+
+
+
