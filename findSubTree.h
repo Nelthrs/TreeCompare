@@ -10,6 +10,7 @@
 #include <map>
 #include <algorithm>
 #include <optional>
+#include <filesystem>
 using namespace std;
 
 
@@ -28,8 +29,8 @@ class PatchConnection;
 
 class Node {
 public:
-	Node(string data);
-	bool isNode();
+	explicit Node(const string& data);
+	bool isNode() const;
 	bool isLeaf() const;
 	unique_ptr<Node> copy() const;
 	Node* addChild(const string& newChildName);
@@ -43,16 +44,13 @@ public:
 	vector<Node*> getChildren() const;
 	void setPatchNode(PatchNode* newPatchNode);
 	PatchNode* getRelPatch() const;
-	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree);
-	vector<PatchConnection*> getConnectionsForChildren(Patch* generalPatch);
+	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const;
+	vector<PatchConnection*> getConnectionsForChildren(const Patch* generalPatch) const;
 	PatchConnection* getMinValidConnection(vector<PatchConnection*> connections);
-	std::optional<vector<pair<Node*, PatchConnection*>>> getMinConnectionPairs(Patch* generalPatch);
-	int buildDeltaTree(Patch* generalPatch);
-	int buildDeltaTree(Node* mainTree, Node* deltaTree, Patch* generalPatch, PatchConnection* prevConnection) const;
-	Node* getMirrorNode(Patch* generalPatch) const;
-	PatchConnection* getMinPatchConnection();
-	vector<pair<PatchConnection*, PatchNode*>> getIncomingConnections(Patch* generalPatch);
-	void removeChild(Node* nodeToDelete);
+	std::optional<vector<pair<Node*, PatchConnection*>>> getMinConnectionPairs(Patch* generalPatch) const;
+	int buildDeltaTree(Patch* generalPatch, int counter);
+	vector<pair<PatchConnection*, PatchNode*>> getIncomingConnections(const Patch* generalPatch) const;
+	void removeChild(const Node* nodeToDelete);
 
 protected:
 	string name;
@@ -60,15 +58,16 @@ protected:
 	PatchNode* relPatch;
 };
 
+void visualizeTree(const Node* root, const string filename);
 unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, int startIndex = 0);
 
 class PatchConnection {
 public:
 	PatchConnection(int weight, Node* searchedSubTree, PatchNode* rootPatchNode);
 	void setWeight(int weight);
-	int getWeight();
+	int getWeight() const;
 	Node* getSearchedSubTree();
-	PatchNode* getRootPatchNode();
+	PatchNode* getRootPatchNode() const;
 protected:
 	int weight;
 	Node* searchedSubTree;
@@ -78,29 +77,26 @@ protected:
 class PatchNode {
 public:
 	PatchNode();
-	PatchNode(Node* rootSubTree);
+	explicit PatchNode(Node* rootSubTree);
 	void addConnection(unique_ptr<PatchConnection> newConnection);
 	void addConnection(int weight, Node* searchedSubTree);
-	vector<PatchConnection*> getConnections();
+	vector<PatchConnection*> getConnections() const;
 	bool conectionsContains(PatchConnection* connection);
 	Node* getRoot();
 	int validConnectionsCount();
-	void addChild(unique_ptr<PatchNode> child);
 protected:
 	Node* rootSubTree;
 	vector<unique_ptr<PatchConnection>> connections;
-	vector<unique_ptr<PatchNode>> children;
 };
 
 class Patch {
 public:
 	Patch();
 	vector<PatchNode*> getPatch() const;
-	int countLeafPatches(Node* tree);
-	vector<pair<PatchNode*, PatchConnection*>> findPointingNode(Node* pointNode) const;
+	vector<pair<PatchNode*, PatchConnection*>> findPointingNode(const Node* pointNode) const;
 	int countDeltaNodes(const Node* pointTree, const Node* sourceTree) const;
-	vector<PatchNode*> findLeafPatches(Node* sourceTree);
-	void deleteAllReferences(const  Node*  excludedNode);
+	vector<PatchNode*> findLeafPatches(const Node* sourceTree) const;
+	void deleteReferences(const  Node*  excludedNode, const optional<vector<PatchConnection*>> reservedConnections);
 	void addNode(unique_ptr<PatchNode> newNode);
 protected:
 	vector<unique_ptr<PatchNode>> patchNodes;

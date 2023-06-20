@@ -4,7 +4,7 @@ using namespace std;
 
 const string GRAPHVIZ_PATH = "dot";
 
-Node::Node(string data)
+Node::Node(const string& data)
 {
 	this->name = data;
 }
@@ -44,6 +44,7 @@ bool Node::isLeaf() const
 }
 
 bool Node::isNode()
+bool Node::isNode() const
 {
 	return !this->isLeaf();
 }
@@ -86,7 +87,7 @@ int Node::buildPatch(Node* cmpTree, Patch* generalPatch) const
 	for (auto& mainChild : this->children) {
 		curPatch = make_unique<PatchNode>(mainChild.get());
 		mainChild->setPatchNode(curPatch.get());
-		for (auto& cmpChild : cmpTree->children) {
+		for (const auto& cmpChild : cmpTree->children) {
 			if (mainChild->getName() == cmpChild->getName()) {
 				if (mainChild->isLeaf() && cmpChild->isLeaf()) {
 					curConnectionDelta = 0;
@@ -105,7 +106,7 @@ int Node::buildPatch(Node* cmpTree, Patch* generalPatch) const
 				curPatch->addConnection(move(curConnection));
 			}
 		}
-		if (curPatch->getConnections().size() == 0) {
+		if (curPatch->getConnections().empty()) {
 			return -1;
 		}
 		generalPatch->addNode(move(curPatch));
@@ -145,7 +146,8 @@ bool Node::isDescendant(const Node* searchedNode) const
 	return false;
 }
 
-vector<PatchConnection*> Node::getConnectionsForChildren(Patch* generalPatch) {
+// Найти все соединения, которые указывают на детей переданного узла дерева
+vector<PatchConnection*> Node::getConnectionsForChildren(const Patch* generalPatch) const {
 	vector<PatchConnection*> connections;
 	for (auto patchNode : generalPatch->getPatch()) {
 		for (auto con : patchNode->getConnections()) {
@@ -174,69 +176,105 @@ PatchConnection* Node::getMinValidConnection(vector<PatchConnection*> connection
 	return minCon;
 }
 
-bool compareByWeight(PatchConnection* conn1, PatchConnection* conn2) 
+bool compareByWeight(const PatchConnection* conn1, const PatchConnection* conn2) 
 {
 	return conn1->getWeight() < conn2->getWeight();
 }
 
-std::optional<vector<pair<Node*, PatchConnection*>>> Node::getMinConnectionPairs(Patch* generalPatch)
+bool patchPresented(const vector<pair<Node*, PatchConnection*>>& pairs, const PatchConnection* searchedCon) 
+{
+	for (auto [node, con] : pairs) {
+		if (con->getRootPatchNode() == searchedCon->getRootPatchNode())
+			return true;
+	}
+	return false;
+}
+
+std::optional<vector<pair<Node*, PatchConnection*>>> Node::getMinConnectionPairs(Patch* generalPatch) const
 {
 	auto connections = this->getConnectionsForChildren(generalPatch);
 	std::sort(connections.begin(), connections.end(), compareByWeight);
 	set<Node*> sortedChildren;												// Отсортированные дети в порядке возрастания весов входящих соединений
 	pair<set<Node*>::iterator, bool> insertionResult;
-	
+	vector<PatchConnection*> reservedConnections;
 	vector<pair<Node*, PatchConnection*>> conPairs;
 
-	for (auto& con : connections) {
-		if (con->getWeight() != -1) {
-			insertionResult = sortedChildren.insert(con->getSearchedSubTree());
+	for (auto con = connections.begin(); con < connections.end(); ) {
+		// Загружаем соединения != -1 и от разных родителей
+		if ((*con)->getWeight() != -1 && !patchPresented(conPairs,(*con))) {
+			insertionResult = sortedChildren.insert((*con)->getSearchedSubTree());
 			if (insertionResult.second) {
-				conPairs.push_back(make_pair(con->getSearchedSubTree(), con));
+				conPairs.push_back(make_pair((*con)->getSearchedSubTree(), (*con)));
+				reservedConnections.push_back((*con));
+				generalPatch->deleteReferences((*con)->getSearchedSubTree(), reservedConnections);
 			}
-		}
-			
+		}	
+		++con;
 	}
 
 	if (sortedChildren.size() != this->children.size()) {
-		return nullopt;
+		for (auto& con : connections) {
+			// Загружаем от разных родителей, допускаем -1
+			if (!patchPresented(conPairs, con)) {
+				insertionResult = sortedChildren.insert(con->getSearchedSubTree());
+				if (insertionResult.second) {
+					conPairs.push_back(make_pair(con->getSearchedSubTree(), con));
+				}
+			}
+		}
+	}
+
+	if (sortedChildren.size() != this->children.size()) {
+		// Для детей, которых нет в основном дереве сопоставляем nullptr
+		for (const auto& child : this->children) {
+			if (sortedChildren.find(child.get()) == sortedChildren.end())
+				conPairs.push_back(make_pair(child.get(), nullptr));
+		}
 	}
 
 	return move(conPairs);
 }
 
-int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
+int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const
 {
-	unique_ptr<Patch> patch = make_unique<Patch>();
+	auto patch = make_unique<Patch>();
 	int minPatch = this->buildPatch(cmpTree, patch.get());
 
 	if (minPatch == -1)
 		return -1;
 
 	deltaTree = make_unique<Node>(this->getName());
-	minPatch = cmpTree->buildDeltaTree(patch.get());
+	minPatch = cmpTree->buildDeltaTree(patch.get(), 0);
 	return minPatch;
 }
 
-int Node::buildDeltaTree(Patch* generalPatch) {
+int Node::buildDeltaTree(Patch* generalPatch, int counter) {
 	auto minAddPairs = this->getMinConnectionPairs(generalPatch);
+	string filename = "buildTree";
+	
 
 	if (!minAddPairs.has_value())
 		return -1;
 
-	for (auto& pair : minAddPairs.value()) {
-		generalPatch->deleteAllReferences(pair.first);
-		if (pair.second->getWeight() == 0) {
-			this->removeChild(pair.first);
+	for (const auto& [node, connection] : minAddPairs.value()) {
+		if (connection == nullptr) {
+			continue;
+		}
+		if (connection->getWeight() == 0) {
+			this->removeChild(node);
 		}
 		else {
-			pair.first->buildDeltaTree(generalPatch);
+			node->buildDeltaTree(generalPatch, counter);
 		}
-
+		
+		visualizeTree(this, filename);
+		generalPatch->deleteReferences(node, nullopt);
 	}
+
+	return 0;
 }
 
-vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(Patch* generalPatch)
+vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(const Patch* generalPatch) const
 {
 	vector<pair<PatchConnection*, PatchNode*>> result;
 
@@ -251,7 +289,7 @@ vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(Patch* g
 	return result;
 }
 
-void Node::removeChild(Node* nodeToDelete)
+void Node::removeChild(const Node* nodeToDelete)
 {
 	for (auto it = children.begin(); it < children.end(); ++it) {
 		if (nodeToDelete == (*it).get()) {
@@ -290,12 +328,7 @@ Node* PatchNode::getRoot()
 	return this->rootSubTree;
 }
 
-void PatchNode::addChild(unique_ptr<PatchNode> child)
-{
-	children.push_back(move(child));
-}
-
-vector<PatchConnection*> PatchNode::getConnections()
+vector<PatchConnection*> PatchNode::getConnections() const
 {
 	vector<PatchConnection*> cons;
 	for (auto& connection : this->connections) {
@@ -318,7 +351,7 @@ void PatchConnection::setWeight(int weight) {
 	this->weight = weight;
 }
 
-int PatchConnection::getWeight()
+int PatchConnection::getWeight() const
 {
 	return this->weight;
 }
@@ -328,7 +361,7 @@ Node* PatchConnection::getSearchedSubTree()
 	return this->searchedSubTree;
 }
 
-PatchNode* PatchConnection::getRootPatchNode()
+PatchNode* PatchConnection::getRootPatchNode() const
 {
 	return this->rootPatchNode;
 }
@@ -348,15 +381,21 @@ vector<PatchNode*> Patch::getPatch() const
 	return patch;
 }
 
-void Patch::deleteAllReferences(const Node* excludedNode) 
+void Patch::deleteReferences(const Node* excludedNode, const optional<vector<PatchConnection*>> reservedConnections = nullopt)
 {
 	vector<PatchConnection*> curCons;
+	vector<PatchConnection*> reservedCons;
+	if (reservedConnections.has_value()) {
+		reservedCons = reservedConnections.value();
+	}
+
 	for (auto patchIter = this->patchNodes.begin(); patchIter < this->patchNodes.end(); ) {
 		curCons = (*patchIter)->getConnections();
 
 		// Удалить все соединения, указывающие на исключаемый узел
 		for (auto i = curCons.begin(); i < curCons.end();) {
-			if((*i)->getSearchedSubTree() == excludedNode) {
+			// Если соединение указывает на исключаемый узел, но этого соединения нет в массиве зарезервированных
+			if((*i)->getSearchedSubTree() == excludedNode && reservedCons.end() != std::find(reservedCons.begin(), reservedCons.end(), (*i))) {
 				i = curCons.erase(i);
 			}
 			else {
@@ -365,7 +404,7 @@ void Patch::deleteAllReferences(const Node* excludedNode)
 		}
 
 		// Удалить текущий PatchNode если он не указывает ни на один узел искомого дерева
-		if ((*patchIter)->getConnections().size() == 0)
+		if ((*patchIter)->getConnections().empty())
 			patchIter = this->patchNodes.erase(patchIter);
 		else
 			++patchIter;
@@ -376,6 +415,7 @@ void Patch::addNode(unique_ptr<PatchNode> newNode)
 {
 	this->patchNodes.push_back(move(newNode));
 }
+
 
 int Patch::countDeltaNodes(const Node* pointTree, const Node* sourceTree) const {
 	int sum = 0;
@@ -402,10 +442,11 @@ int Patch::countDeltaNodes(const Node* pointTree, const Node* sourceTree) const 
 	return sum;
 }
 
-vector<PatchNode*> Patch::findLeafPatches(Node* sourceTree ) {
+vector<PatchNode*> Patch::findLeafPatches(const Node* sourceTree) const 
+{
 	vector<PatchNode*> leafNodes;
 	for (auto& node : this->patchNodes) {
-		if (node->getConnections().size() == 0 && sourceTree->isDescendant(node->getRoot())) {
+		if (node->getConnections().empty() && sourceTree->isDescendant(node->getRoot())) {
 			leafNodes.push_back(node.get());
 		}
 	}
@@ -413,7 +454,7 @@ vector<PatchNode*> Patch::findLeafPatches(Node* sourceTree ) {
 }
 
 // Проверяет, есть ли в Patch элементы(PatchNode) которые указывают на этот treeNode
-vector<pair<PatchNode*, PatchConnection*>> Patch::findPointingNode(Node* pointNode) const {
+vector<pair<PatchNode*, PatchConnection*>> Patch::findPointingNode(const Node* pointNode) const {
 	vector<pair<PatchNode*, PatchConnection*>> pointingNodes;
 	vector<PatchConnection*> curCons;
 	
@@ -497,7 +538,7 @@ protected:
 
 
 
-bool readFile(string path, string* content)
+bool readFile(const string& path, string* content)
 {
 	bool success = false;
 	string line;
@@ -516,16 +557,16 @@ bool readFile(string path, string* content)
 	return success;
 }
 
-string extractWord(string str, unsigned startIndex, string delimiters)
+string extractWord(const string& str, unsigned startIndex, const string& delimiters)
 {
 	// Íàéòè ïåðâîå âõîæäåíèå îäíîãî èç ðàçäåëèòåëåé
-	int word_end = str.find_first_of(delimiters, startIndex);
+	auto word_end = str.find_first_of(delimiters, startIndex);
 
 	// Ñ÷èòàòü, ÷òî ñëîâî êîí÷èëîñü, êîãäà âñòðå÷åí ïåðâûé ðàçäåëèòåëü
 	return str.substr(startIndex, word_end - startIndex);
 }
 
-vector<Lexem> strToLexems(const string& content, string delimiters)
+vector<Lexem> strToLexems(const string& content, const string& delimiters)
 {
 	vector<Lexem> lexems;
 	int i = 0;
@@ -606,11 +647,23 @@ void visualizeTree(const Node* root, const string filename = "tree.png") {
 	file << "}" << std::endl;
 	file.close();
 
-	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o " + filename;
+	std::string uniqueFilename = filename + ".png";
+	int i = 0;
+	while (filesystem::exists(uniqueFilename)) {
+		i++;
+		size_t dotPosition = filename.find_last_of('.');
+		std::string extension = (dotPosition != std::string::npos) ? filename.substr(dotPosition) : "";
+
+		uniqueFilename = filename.substr(0, dotPosition) + "_" + std::to_string(i) + extension;
+	}
+
+	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o " + uniqueFilename;
 	system(command.c_str());
 
-	std::cout << "Tree visualization generated: " + filename << std::endl;
+	std::cout << "Tree visualization generated: " + uniqueFilename << std::endl;
 }
+
+
 
 int main()
 {
@@ -626,7 +679,7 @@ int main()
 	//string c2 = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
 
 	string c1 = "1(3(5 6) 3(5(7) 6) 4)";
-	string c2 = "1(3(5(7 8) 6) 3(5(7) 6) 4)";
+	string c2 = "1(3(5(7 8 9 10 11 12) 6) 3(5(7) 6) 4)";
 
 	// string c1 = "tractor(steering wheel (right_half left_half) who)";
 	// string c2 = "tractor(steering wheel (right_half left_half) who)";
@@ -638,7 +691,7 @@ int main()
 	visualizeTree(tree1.get(), "tree1.png");
 	visualizeTree(tree2.get(), "tree2.png");
 	cout << tree1->buildDeltaTreeWrap(tree2.get(), deltaTree) << endl;
-	deltaTree->print();
+	tree2->print();
 	visualizeTree(tree2.get(), "deltaTree.png");
 
 }
