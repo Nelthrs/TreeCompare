@@ -43,7 +43,6 @@ bool Node::isLeaf() const
 	return false;
 }
 
-bool Node::isNode()
 bool Node::isNode() const
 {
 	return !this->isLeaf();
