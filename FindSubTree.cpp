@@ -48,6 +48,12 @@ bool Node::isNode() const
 	return !this->isLeaf();
 }
 
+bool Node::isChild(const Node* probablyChild) const {
+	return any_of(children.begin(), children.end(), [probablyChild](const auto& child) -> bool {
+		return probablyChild == child.get();
+	});
+}
+
 int Node::descendantsCount() const
 {
 	int count = children.size();
@@ -64,54 +70,6 @@ vector<Node*> Node::getChildren() const {
 		result.push_back(child.get());
 	}
 	return result;
-}
-
-void Node::setPatchNode(PatchNode* newPatchNode)
-{
-	this->relPatch = newPatchNode;
-}
-
-PatchNode* Node::getRelPatch() const
-{
-	return this->relPatch;
-}
-
-int Node::buildPatch(Node* cmpTree, Patch* generalPatch) const
-{
-	int curConnectionDelta;
-	int sumConnectionDelta = 0;
-	std::unique_ptr<PatchNode> curPatch;
-	std::unique_ptr<PatchConnection> curConnection;
-
-	for (auto& mainChild : this->children) {
-		curPatch = make_unique<PatchNode>(mainChild.get());
-		mainChild->setPatchNode(curPatch.get());
-		for (const auto& cmpChild : cmpTree->children) {
-			if (mainChild->getName() == cmpChild->getName()) {
-				if (mainChild->isLeaf() && cmpChild->isLeaf()) {
-					curConnectionDelta = 0;
-				}
-				else if (mainChild->isLeaf() && cmpChild->isNode()) {
-					curConnectionDelta = cmpChild->descendantsCount();
-				}
-				else if (mainChild->isNode() && cmpChild->isLeaf()) {
-					curConnectionDelta = -1;
-				}
-				else if(mainChild->isNode() && cmpChild->isNode()) {
-					curConnectionDelta = mainChild->buildPatch(cmpChild.get(), generalPatch);
-				}
-
-				curConnection = make_unique<PatchConnection>(curConnectionDelta, cmpChild.get(), curPatch.get());
-				curPatch->addConnection(move(curConnection));
-			}
-		}
-		if (curPatch->getConnections().empty()) {
-			return -1;
-		}
-		generalPatch->addNode(move(curPatch));
-	}
-	sumConnectionDelta += generalPatch->countDeltaNodes(cmpTree, this);
-	return sumConnectionDelta;
 }
 
 string Node::getName() const
@@ -145,147 +103,24 @@ bool Node::isDescendant(const Node* searchedNode) const
 	return false;
 }
 
-// Найти все соединения, которые указывают на детей переданного узла дерева
-vector<PatchConnection*> Node::getConnectionsForChildren(const Patch* generalPatch) const {
-	vector<PatchConnection*> connections;
-	for (auto patchNode : generalPatch->getPatch()) {
-		for (auto con : patchNode->getConnections()) {
-			for (auto& child : this->children) {
-				if (con->getSearchedSubTree() == child.get())
-					connections.push_back(con);
-			}
-		}
-	}
-	return connections;
-}
-
-// Найти минимальное валидное(не == -1) соединение, входящее в this
-PatchConnection* Node::getMinValidConnection(vector<PatchConnection*> connections) 
+int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
 {
-	if (connections.size() < 1) {
-		return nullptr;
-	}
+	auto cmpTreeCopy = cmpTree->copy();
+	auto patch = this->buildPatchWrap(cmpTreeCopy.get());
 
-	PatchConnection* minCon = connections[0];
-	for (auto con : connections) {
-		if (minCon->getWeight() > con->getWeight() || minCon->getWeight() == -1)
-			minCon = con;
-	}
-
-	return minCon;
-}
-
-bool compareByWeight(const PatchConnection* conn1, const PatchConnection* conn2) 
-{
-	return conn1->getWeight() < conn2->getWeight();
-}
-
-bool patchPresented(const vector<pair<Node*, PatchConnection*>>& pairs, const PatchConnection* searchedCon) 
-{
-	for (auto [node, con] : pairs) {
-		if (con->getRootPatchNode() == searchedCon->getRootPatchNode())
-			return true;
-	}
-	return false;
-}
-
-std::optional<vector<pair<Node*, PatchConnection*>>> Node::getMinConnectionPairs(Patch* generalPatch) const
-{
-	auto connections = this->getConnectionsForChildren(generalPatch);
-	std::sort(connections.begin(), connections.end(), compareByWeight);
-	set<Node*> sortedChildren;												// Отсортированные дети в порядке возрастания весов входящих соединений
-	pair<set<Node*>::iterator, bool> insertionResult;
-	vector<PatchConnection*> reservedConnections;
-	vector<pair<Node*, PatchConnection*>> conPairs;
-
-	for (auto con = connections.begin(); con < connections.end(); ) {
-		// Загружаем соединения != -1 и от разных родителей
-		if ((*con)->getWeight() != -1 && !patchPresented(conPairs,(*con))) {
-			insertionResult = sortedChildren.insert((*con)->getSearchedSubTree());
-			if (insertionResult.second) {
-				conPairs.push_back(make_pair((*con)->getSearchedSubTree(), (*con)));
-				reservedConnections.push_back((*con));
-				generalPatch->deleteReferences((*con)->getSearchedSubTree(), reservedConnections);
-			}
-		}	
-		++con;
-	}
-
-	if (sortedChildren.size() != this->children.size()) {
-		for (auto& con : connections) {
-			// Загружаем от разных родителей, допускаем -1
-			if (!patchPresented(conPairs, con)) {
-				insertionResult = sortedChildren.insert(con->getSearchedSubTree());
-				if (insertionResult.second) {
-					conPairs.push_back(make_pair(con->getSearchedSubTree(), con));
-				}
-			}
-		}
-	}
-
-	if (sortedChildren.size() != this->children.size()) {
-		// Для детей, которых нет в основном дереве сопоставляем nullptr
-		for (const auto& child : this->children) {
-			if (sortedChildren.find(child.get()) == sortedChildren.end())
-				conPairs.push_back(make_pair(child.get(), nullptr));
-		}
-	}
-
-	return move(conPairs);
-}
-
-int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree) const
-{
-	auto patch = make_unique<Patch>();
-	int minPatch = this->buildPatch(cmpTree, patch.get());
-
-	if (minPatch == -1)
+	if (patch->buildDeltaTree(cmpTreeCopy.get()) == -1) {
+		deltaTree = nullptr;
 		return -1;
-
-	deltaTree = make_unique<Node>(this->getName());
-	minPatch = cmpTree->buildDeltaTree(patch.get(), 0);
-	return minPatch;
-}
-
-int Node::buildDeltaTree(Patch* generalPatch, int counter) {
-	auto minAddPairs = this->getMinConnectionPairs(generalPatch);
-	string filename = "buildTree";
+	}
 	
-
-	if (!minAddPairs.has_value())
-		return -1;
-
-	for (const auto& [node, connection] : minAddPairs.value()) {
-		if (connection == nullptr) {
-			continue;
-		}
-		if (connection->getWeight() == 0) {
-			this->removeChild(node);
-		}
-		else {
-			node->buildDeltaTree(generalPatch, counter);
-		}
-		
-		visualizeTree(this, filename);
-		generalPatch->deleteReferences(node, nullopt);
+	if (cmpTreeCopy->descendantsCount() == 0) {
+		deltaTree = nullptr;
+	}
+	else {
+		deltaTree = move(cmpTreeCopy);
 	}
 
 	return 0;
-}
-
-vector<pair<PatchConnection*, PatchNode*>> Node::getIncomingConnections(const Patch* generalPatch) const
-{
-	vector<pair<PatchConnection*, PatchNode*>> result;
-
-	for (auto patchNode : generalPatch->getPatch()) {
-		for (auto con : patchNode->getConnections()) {
-			if (con->getSearchedSubTree() == this && con->getWeight() != -1) {
-				result.push_back(make_pair(con, patchNode));
-			}
-		}
-	}
-	
-	return result;
 }
 
 void Node::removeChild(const Node* nodeToDelete)
@@ -298,7 +133,94 @@ void Node::removeChild(const Node* nodeToDelete)
 	}
 }
 
+unique_ptr<PatchNode> Node::buildPatchWrap(Node* cmpTree) {
+	auto patch = make_unique<PatchNode>(this);
+	int rootConWeight = this->buildPatch(cmpTree, patch.get());
+	patch->addConnection(rootConWeight, cmpTree);
+	return move(patch);
+}
 
+int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
+	unique_ptr<PatchNode> curPatchNode;
+	int curWeight;
+	for (const auto& mainChild : this->children) {
+		curPatchNode = make_unique<PatchNode>(mainChild.get());
+		for (const auto& cmpChild : cmpTree->children) {
+			if (!(mainChild->getName() == cmpChild->getName())) {
+				continue;
+			}
+
+			if (mainChild->isLeaf() && cmpChild->isLeaf()) {
+				curWeight = 0;
+			}
+			else if (mainChild->isLeaf() && cmpChild->isNode()) {
+				curWeight = cmpChild->descendantsCount();
+			}
+			else if (mainChild->isNode() && cmpChild->isLeaf()) {
+				curWeight = -1;
+			}
+			else if (mainChild->isNode() && cmpChild->isNode()) {
+				curWeight = mainChild->buildPatch(cmpChild.get(), curPatchNode.get());
+			}
+
+			curPatchNode->addConnection(curWeight, cmpChild.get());
+		}
+
+		// Если в главном дереве есть узлы, на которых не нашлось узла из cmpTree, то сравнение невозможно
+		if (curPatchNode->getConnections().empty())
+			return -1;
+
+		patch->addChild(move(curPatchNode));
+	}
+
+
+	int currentMinConnectionIndex;
+	int minSumConnections = 0;
+
+	// Если количество детей patch не равно количеству детей в узле сравниваемого дерева
+	if (patch->getChildren().size() < cmpTree->children.size()) {
+		auto uncaughtChildren = patch->findUncaughtChildren(cmpTree);
+		for (const auto& child : uncaughtChildren) {
+			minSumConnections += 1 + child->descendantsCount();
+		}
+	}
+
+	for (const auto& patchChild : patch->getChildren()) {
+		currentMinConnectionIndex = patchChild->findMinValidConnection();
+
+		if (currentMinConnectionIndex == -1)
+			return -1;
+
+		minSumConnections += patchChild->getConnections()[currentMinConnectionIndex].second;
+	}
+
+	return minSumConnections;
+}
+
+
+// this - cmpTree
+int PatchNode::buildDeltaTree(Node* cmpTree) const
+{
+	int curMinConnectionIndex;
+	vector<pair<Node*, int>> curConnections;
+
+	for (auto patchChild : this->getChildren()) {
+		curConnections = patchChild->getConnections();
+		curMinConnectionIndex = patchChild->findMinValidConnection();
+
+		if (curMinConnectionIndex == -1)
+			return -1;
+
+		
+		if (curConnections[curMinConnectionIndex].second == 0) {
+			cmpTree->removeChild(curConnections[curMinConnectionIndex].first);
+		}
+		else {
+			if (patchChild->buildDeltaTree(curConnections[curMinConnectionIndex].first) == -1)
+				return -1;
+		}
+	 }
+}
 
 
 PatchNode::PatchNode()
@@ -311,162 +233,83 @@ PatchNode::PatchNode(Node* rootSubTree)
 	this->rootSubTree = rootSubTree;
 }
 
-void PatchNode::addConnection(unique_ptr<PatchConnection> newConnection)
+PatchNode* PatchNode::addChild(unique_ptr<PatchNode> newChild)
 {
-	this->connections.push_back(move(newConnection));
+	this->children.push_back(move(newChild));
+	return (*(children.end() - 1)).get();
 }
 
 void PatchNode::addConnection(int weight, Node* searchedSubTree)
 {
-	auto newConnection = make_unique<PatchConnection>(weight, searchedSubTree, this);
-	this->connections.push_back(move(newConnection));
+	auto newPair = make_pair(searchedSubTree, weight);
+	for (auto conIt = this->connections.begin(); conIt < this->connections.end(); ++conIt) {
+		if ((*conIt).second > weight) {
+			this->connections.insert(conIt, newPair);
+			return;
+		}
+	}
+	this->connections.push_back(newPair);
 }
 
-Node* PatchNode::getRoot()
+Node* PatchNode::getRoot() const
 {
 	return this->rootSubTree;
 }
 
-vector<PatchConnection*> PatchNode::getConnections() const
+vector<PatchNode*> PatchNode::getChildren() const
 {
-	vector<PatchConnection*> cons;
-	for (auto& connection : this->connections) {
-		cons.push_back(connection.get());
+	vector<PatchNode*> resChildren;
+	for (const auto& child : this->children) {
+		resChildren.push_back(child.get());
 	}
-	return cons;
+	return resChildren;
 }
 
-
-
-
-PatchConnection::PatchConnection(int weight, Node* searchedSubTree, PatchNode* rootPatchNode)
+vector<pair<Node*, int>>::const_iterator PatchNode::findConnection(const Node* searchedNode) const
 {
-	this->weight = weight;
-	this->searchedSubTree = searchedSubTree;
-	this->rootPatchNode = rootPatchNode;
-}
-
-void PatchConnection::setWeight(int weight) {
-	this->weight = weight;
-}
-
-int PatchConnection::getWeight() const
-{
-	return this->weight;
-}
-
-Node* PatchConnection::getSearchedSubTree()
-{
-	return this->searchedSubTree;
-}
-
-PatchNode* PatchConnection::getRootPatchNode() const
-{
-	return this->rootPatchNode;
-}
-
-
-
-Patch::Patch() {
-	this->patchNodes.clear();
-}
-
-vector<PatchNode*> Patch::getPatch() const
-{
-	vector<PatchNode*> patch;
-	for (auto& patchNode : this->patchNodes) {
-		patch.push_back(patchNode.get());
+	for (auto i = this->connections.begin(); i < this->connections.end(); i++) {
+		if ((*i).first == searchedNode) {
+			return i;
+		}
 	}
-	return patch;
+	return this->connections.end();
 }
 
-void Patch::deleteReferences(const Node* excludedNode, const optional<vector<PatchConnection*>> reservedConnections = nullopt)
+// Найти соединение с минимальным весом(но не -1) и вернуть индекс этого соединения
+int PatchNode::findMinValidConnection(int startIndex) const
 {
-	vector<PatchConnection*> curCons;
-	vector<PatchConnection*> reservedCons;
-	if (reservedConnections.has_value()) {
-		reservedCons = reservedConnections.value();
+	for (int i = startIndex; i < this->connections.size(); i++) {
+		if (this->connections[i].second != -1)
+			return i;
 	}
+	return -1;
+}
 
-	for (auto patchIter = this->patchNodes.begin(); patchIter < this->patchNodes.end(); ) {
-		curCons = (*patchIter)->getConnections();
+vector<pair<Node*, int>> PatchNode::getConnections() const
+{
+	return connections;
+}
 
-		// Удалить все соединения, указывающие на исключаемый узел
-		for (auto i = curCons.begin(); i < curCons.end();) {
-			// Если соединение указывает на исключаемый узел, но этого соединения нет в массиве зарезервированных
-			if((*i)->getSearchedSubTree() == excludedNode && reservedCons.end() != std::find(reservedCons.begin(), reservedCons.end(), (*i))) {
-				i = curCons.erase(i);
+// Возвращает массив детей дерева, на которых не нашлось узлов патча среди детей текущего patchNode
+vector<Node*> PatchNode::findUncaughtChildren(const Node* treeNode) const
+{
+	vector<Node*> uncaughtChildren = treeNode->getChildren();
+	for (const auto& patchChild : this->children) {
+		for (const auto& patchChildConnection : patchChild->getConnections()) {
+			if (!treeNode->isChild(patchChildConnection.first)) {
+				continue;
 			}
-			else {
-				++i;
-			}
-		}
-
-		// Удалить текущий PatchNode если он не указывает ни на один узел искомого дерева
-		if ((*patchIter)->getConnections().empty())
-			patchIter = this->patchNodes.erase(patchIter);
-		else
-			++patchIter;
-	}
-}
-
-void Patch::addNode(unique_ptr<PatchNode> newNode)
-{
-	this->patchNodes.push_back(move(newNode));
-}
-
-
-int Patch::countDeltaNodes(const Node* pointTree, const Node* sourceTree) const {
-	int sum = 0;
-	bool patchFound = false;
-	vector<pair<PatchNode*, PatchConnection*>> pointingNodes;
-
-	// Для каждого ребенка узла смотрим, указывает ли на него какой-то Patch
-	for (auto& child : pointTree->getChildren()) {
-		patchFound = false;
-		pointingNodes = this->findPointingNode(child);
-		for (auto& ptrNode : pointingNodes) {
-			// Если корень Patch находится в исходном дереве, то прибавляем вес соотвествующего соединения к общей сумме 
-			if (sourceTree->isDescendant(ptrNode.first->getRoot())) {
-				sum += ptrNode.second->getWeight();
-				patchFound = true;
-			}
-		}
-		// Если для данного ребенка нет соответсвующего Patch, то прибавляем к общем сумме 1 + кол-во его потомков
-		if(!patchFound)
-			sum += 1 + child->descendantsCount();
-
-	}
-
-	return sum;
-}
-
-vector<PatchNode*> Patch::findLeafPatches(const Node* sourceTree) const 
-{
-	vector<PatchNode*> leafNodes;
-	for (auto& node : this->patchNodes) {
-		if (node->getConnections().empty() && sourceTree->isDescendant(node->getRoot())) {
-			leafNodes.push_back(node.get());
+			auto it = std::find_if(uncaughtChildren.begin(), uncaughtChildren.end(), [patchChildConnection](const Node* child) {
+				return patchChildConnection.first == child;
+				});
+			if (it != uncaughtChildren.end())
+				uncaughtChildren.erase(it);
 		}
 	}
-	return leafNodes;
+	return uncaughtChildren;
 }
 
-// Проверяет, есть ли в Patch элементы(PatchNode) которые указывают на этот treeNode
-vector<pair<PatchNode*, PatchConnection*>> Patch::findPointingNode(const Node* pointNode) const {
-	vector<pair<PatchNode*, PatchConnection*>> pointingNodes;
-	vector<PatchConnection*> curCons;
-	
-	for (auto& node : this->patchNodes) {
-		curCons = node->getConnections();
-		for (auto& con : curCons) {
-			if (pointNode == con->getSearchedSubTree())
-				pointingNodes.push_back(make_pair(node.get(), con));
-		}
-	}
 
-	return pointingNodes;
-}
 
 
 
@@ -625,43 +468,70 @@ unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, in
 	return sexpToTree(lexems, startIndex);
 }
 
-void generateDotFile(const Node* node, std::ofstream& file) {
-	static int counter = 0;
-	int current = counter++;
+// Картинки
+void generateDotFile(const PatchNode* patch, std::ostream& dotStream) {
+	dotStream << "digraph Patch {" << std::endl;
 
-	file << "node" << current << " [label=\"" << node->getName() << "\"];" << std::endl;
+	std::set<Node*> visitedNodes;
+	std::stack<const PatchNode*> nodeStack;
 
-	const std::vector<Node*>& children = node->getChildren();
-	for (const auto& child : children) {
-		int childNode = counter;
-		generateDotFile(child, file);
-		file << "node" << current << " -> node" << childNode << ";" << std::endl;
+	// Рекурсивно обходите PatchNode и его детей
+	nodeStack.push(patch);
+	while (!nodeStack.empty()) {
+		const PatchNode* currNode = nodeStack.top();
+		nodeStack.pop();
+
+		// Добавьте узел в файл DOT, если он еще не посещен
+		if (visitedNodes.find(currNode->getRoot()) == visitedNodes.end()) {
+			visitedNodes.insert(currNode->getRoot());
+			dotStream << "    \"" << currNode->getRoot()->getName() << ": Patch\";" << std::endl;
+		}
+
+		// Добавьте соединения между текущим узлом и его детьми с подписями весов
+		for (const auto& connection : currNode->getConnections()) {
+			dotStream << "    \"" << currNode->getRoot()->getName() << ": Patch\" -> \"" << connection.first->getName() << "\" [label=\"" << connection.second << "\"];" << std::endl;
+		}
+
+		// Добавьте соединения между текущим узлом и его детьми PatchNode
+		for (const auto& child : currNode->getChildren()) {
+			dotStream << "    \"" << currNode->getRoot()->getName() << ": Patch\" -> \"" << child->getRoot()->getName() << ": Patch\" [style=dotted];" << std::endl;
+		}
+
+		// Поместите всех детей текущего узла в стек для обхода
+		for (const auto& child : currNode->getChildren()) {
+			nodeStack.push(child);
+		}
 	}
+
+	dotStream << "}" << std::endl;
 }
 
-void visualizeTree(const Node* root, const string filename = "tree.png") {
-	std::ofstream file("tree.dot");
-	file << "digraph Tree {" << std::endl;
-	generateDotFile(root, file);
-	file << "}" << std::endl;
-	file.close();
 
-	std::string uniqueFilename = filename + ".png";
-	int i = 0;
-	while (filesystem::exists(uniqueFilename)) {
-		i++;
-		size_t dotPosition = filename.find_last_of('.');
-		std::string extension = (dotPosition != std::string::npos) ? filename.substr(dotPosition) : "";
+bool generatePngFromDotContent(const std::string& dotContent, const std::string& pngFileName) {
+	// Создайте временный файл с содержимым DOT
+	std::string dotFileName = "temp.dot";
+	std::ofstream dotFile(dotFileName);
+	dotFile << dotContent;
+	dotFile.close();
 
-		uniqueFilename = filename.substr(0, dotPosition) + "_" + std::to_string(i) + extension;
-	}
+	// Запустите команду dot для создания PNG из DOT
+	std::string command = "dot -Tpng " + dotFileName + " -o " + pngFileName;
+	int result = std::system(command.c_str());
 
-	std::string command = GRAPHVIZ_PATH + " -Tpng tree.dot -o " + uniqueFilename;
-	system(command.c_str());
+	// Удалите временный файл DOT
+	std::filesystem::remove(dotFileName);
 
-	std::cout << "Tree visualization generated: " + uniqueFilename << std::endl;
+	// Верните true, если конвертация прошла успешно
+	return (result == 0);
 }
 
+bool generatePngFromPatch(const PatchNode* patch, const std::string& pngFileName) {
+	std::stringstream dotStream;
+	generateDotFile(patch, dotStream);
+	std::string dotContent = dotStream.str();
+
+	return generatePngFromDotContent(dotContent, pngFileName);
+}
 
 
 int main()
@@ -678,19 +548,19 @@ int main()
 	//string c2 = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
 
 	string c1 = "1(3(5 6) 3(5(7) 6) 4)";
-	string c2 = "1(3(5(7 8 9 10 11 12) 6) 3(5(7) 6) 4)";
+	string c2 = "1(3(5 6) 3(5(7) 6) 4)";
 
-	// string c1 = "tractor(steering wheel (right_half left_half) who)";
-	// string c2 = "tractor(steering wheel (right_half left_half) who)";
+	//string c1 = "tractor(steering_wheel (right_half left_half) who)";
+	//string c2 = "tractor(steering_wheel (right_half left_half) who)";
 
+	//string c1 = "1(4 3(13 14) 4(5))";
+	//string c2 = "1(3(10 11 12 13 14) 4 4(5))";
 	auto tree1 = parseOnTree(c1, delimiters);
 	auto tree2 = parseOnTree(c2, delimiters);
 	unique_ptr<Node> deltaTree;
 
-	visualizeTree(tree1.get(), "tree1.png");
-	visualizeTree(tree2.get(), "tree2.png");
-	cout << tree1->buildDeltaTreeWrap(tree2.get(), deltaTree) << endl;
-	tree2->print();
-	visualizeTree(tree2.get(), "deltaTree.png");
-
+	auto patch = tree1->buildDeltaTreeWrap(tree2.get(), deltaTree);
+	if (patch != -1)
+		deltaTree->print();
+	cout << patch;
 }
