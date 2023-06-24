@@ -37,17 +37,18 @@ public:
 	unique_ptr<Node> copy() const;
 	Node* addChild(const string& newChildName);
 	void addChild(unique_ptr<Node> newChild);
+	void removeChild(const Node* nodeToDelete);
 	int descendantsCount() const;
 	string getName() const;
 	void print(int level = 0) const;
-	bool isDescendant(const Node* searchedNode) const;
-	Node* findFather(const Node* desiredChild);
+	vector<const Node*> findDescendants(const string& searchedNodeName) const;
 	vector<Node*> getChildren() const;
-	int buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree);
-	void removeChild(const Node* nodeToDelete);
-	unique_ptr<PatchNode> buildPatchWrap(Node* cmpTree);
+	unique_ptr<Node> buildPedigree(const Node* child) const;
+	int findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree);
+	unique_ptr<PatchNode> buildPatchWrap(Node* cmpTree) const;
 	int buildPatch(const Node* cmpTree, PatchNode* patch) const;
-protected:
+	int buildDeltaTreeWrap(const Node* cmpTree, unique_ptr<Node>& deltaTree) const;
+private:
 	string name;
 	vector<unique_ptr<Node>> children;
 };
@@ -57,6 +58,7 @@ unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, in
 class PatchNode {
 public:
 	PatchNode();
+	explicit PatchNode(const Node* rootSubTree);
 	explicit PatchNode(Node* rootSubTree);
 	PatchNode* addChild(unique_ptr<PatchNode> newChild);
 	void addConnection(int weight, Node* searchedSubTree);
@@ -67,7 +69,7 @@ public:
 	vector<pair<Node*, int>>::const_iterator findConnection(const Node* searchedNode) const;
 	int findMinValidConnection(int startIndex = 0) const;
 	int buildDeltaTree(Node* cmpTree) const;
-protected:
+private:
 	Node* rootSubTree;
 	vector<pair<Node*, int>> connections;
 	vector<unique_ptr<PatchNode>> children;

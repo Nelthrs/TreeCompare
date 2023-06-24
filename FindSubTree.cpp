@@ -4,16 +4,31 @@ using namespace std;
 
 const string GRAPHVIZ_PATH = "dot";
 
+/**
+ * Создать узел
+ * \param[in] data Имя нового узла
+ */
 Node::Node(const string& data)
 {
 	this->name = data;
 }
 
+/**
+ * Добавить ребёнка к заданному узлу
+ * \param[in] this Родительский узел
+ * \param[in] newChild Новый ребёнок
+ */
 void Node::addChild(unique_ptr<Node> newChild)
 {
 	this->children.push_back(move(newChild));
 }
 
+/**
+ * Добавить ребёнка к заданному узлу
+ * \param[in] this Родительский узел
+ * \param[in] newChildName Имя нового ребёнка
+ * \return Указатель на созданного ребёнка
+ */
 Node* Node::addChild(const string& newChildName)
 {
 	Node* addedChild = nullptr;
@@ -23,8 +38,16 @@ Node* Node::addChild(const string& newChildName)
 	return addedChild;
 }
 
+/**
+ * Создать копию дерева
+ * \param[in] this Копируемое дерево
+ * \return Скопированное дерево
+ */
 unique_ptr<Node> Node::copy() const
 {
+	if (this == nullptr)
+		return nullptr;
+
 	auto root = make_unique<Node>(this->name);
 
 	for (auto& child : children)
@@ -35,25 +58,52 @@ unique_ptr<Node> Node::copy() const
 	return root;
 }
 
+/**
+ * Узнать, является ли этот узел - листом
+ * \param[in] this Узел
+ * \return Логический флаг, является ли листом
+ */
 bool Node::isLeaf() const
 {
+	if (this == nullptr)
+		return false;
+
 	if (this->children.size() == 0)
 		return true;
 
 	return false;
 }
 
+/**
+ * Узнать, есть ли у этого узла потомки
+ * \param[in] this Узел
+ * \return Логический флаг, есть ли потомки
+ */
 bool Node::isNode() const
 {
+	if (this == nullptr)
+		return false;
+
 	return !this->isLeaf();
 }
 
+/**
+ * Узнать, является ли узел ребёнком по отношению к данному узлу
+ * \param[in] this Узел
+ * \param[in] probablyChild Узел, подозреваемый в качестве ребёнка
+ * \return Логический флаг, является ли узел ребёнком
+ */
 bool Node::isChild(const Node* probablyChild) const {
 	return any_of(children.begin(), children.end(), [probablyChild](const auto& child) -> bool {
 		return probablyChild == child.get();
 	});
 }
 
+/**
+ * Узнать количество потомков узла
+ * \param[in] this Узел
+ * \return количество потомков
+ */
 int Node::descendantsCount() const
 {
 	int count = children.size();
@@ -64,6 +114,11 @@ int Node::descendantsCount() const
 	return count;
 }
 
+/**
+ * Поиск всех детей данного узла
+ * \param[in] this Узел
+ * \return Дети данного узла
+ */
 vector<Node*> Node::getChildren() const {
 	vector<Node*> result;
 	for (const auto& child : children) {
@@ -72,11 +127,21 @@ vector<Node*> Node::getChildren() const {
 	return result;
 }
 
+/**
+ * Выведать название данного узла
+ * \param[in] this Узел
+ * \return Название данного узла
+ */
 string Node::getName() const
 {
 	return this->name;
 }
 
+/**
+ * Печать дерева в консоль.
+ * \param[in] this Узел
+ * \param[in] level Стартовый отступ от левого края консоли
+ */
 void Node::print(int level) const
 {
 	for (int i = 0; i < level; ++i)
@@ -90,23 +155,33 @@ void Node::print(int level) const
 	}
 }
 
-bool Node::isDescendant(const Node* searchedNode) const 
+/**
+ * Поиск всех потомков узла с заданным именем.
+ * \param[in] this Корень дерева, в котором производится поиск
+ * \param[in] searchedNodeName Наименование искомых потомков
+ * \return Найденные потомки
+ */
+vector<const Node*> Node::findDescendants(const string& searchedNodeName) const
 {
-	if (this == searchedNode)
-		return true;
+	vector<const Node*> foundNodes;
+	vector<const Node*> foundInChild;
 
-	for (auto& child : children) {
-		if (child->isDescendant(searchedNode))
-			return true;
+	if (this->getName() == searchedNodeName) {
+		foundNodes.push_back(this);
 	}
 
-	return false;
+	for (const auto& child : children) {
+		foundInChild = child->findDescendants(searchedNodeName);
+		foundNodes.insert(foundNodes.end(), foundInChild.begin(), foundInChild.end());
+	}
+
+	return foundNodes;
 }
 
-int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
+int Node::buildDeltaTreeWrap(const Node* cmpTree, unique_ptr<Node>& deltaTree) const
 {
-	auto cmpTreeCopy = cmpTree->copy();
-	auto patch = this->buildPatchWrap(cmpTreeCopy.get());
+	unique_ptr<Node> cmpTreeCopy = cmpTree->copy();
+	unique_ptr<PatchNode> patch = this->buildPatchWrap(cmpTreeCopy.get());
 
 	if (patch->buildDeltaTree(cmpTreeCopy.get()) == -1) {
 		deltaTree = nullptr;
@@ -123,6 +198,37 @@ int Node::buildDeltaTreeWrap(Node* cmpTree, unique_ptr<Node>& deltaTree)
 	return 0;
 }
 
+/**
+ * Создание родословной узла(пути по дереву от потомка до самого старшего родителя).
+ * \param[in] this Дерево, в котором ищется родословная
+ * \param[in] searchedChild Узел, для которого составляется родословная
+ * \return Родословная узла
+ */
+unique_ptr<Node> Node::buildPedigree(const Node* searchedChild) const
+{
+	unique_ptr<Node> foundNode;
+	unique_ptr<Node> pedigree = make_unique<Node>(this->getName());
+	
+	if (this == searchedChild) {
+		return move(pedigree);
+	}
+
+	for (const auto& treeChild : children) {
+		foundNode = treeChild->buildPedigree(searchedChild);
+		if (foundNode != nullptr) {
+			pedigree->addChild(move(foundNode));
+			return move(pedigree);
+		}
+	} 
+
+	return nullptr;
+}
+
+/**
+ * Функция удаляет указанного ребёнка узла
+ * \param[in] this Узел
+ * \param[in] nodeToDelete Удаляемый ребёнок узла
+ */
 void Node::removeChild(const Node* nodeToDelete)
 {
 	for (auto it = children.begin(); it < children.end(); ++it) {
@@ -133,13 +239,26 @@ void Node::removeChild(const Node* nodeToDelete)
 	}
 }
 
-unique_ptr<PatchNode> Node::buildPatchWrap(Node* cmpTree) {
+/**
+ * Инициализировать корневой Patch-узел и построить Patch дерево
+ * \param[in] this Главное дерево
+ * \param[in] cmpTree Сравниваемое дерево
+ * \return Patch
+ */
+unique_ptr<PatchNode> Node::buildPatchWrap(Node* cmpTree) const {
 	auto patch = make_unique<PatchNode>(this);
 	int rootConWeight = this->buildPatch(cmpTree, patch.get());
 	patch->addConnection(rootConWeight, cmpTree);
 	return move(patch);
 }
 
+/**
+ * Построить Patch дерево, с заданным корневым узлом
+ * \param[in] this Главное дерево
+ * \param[in] cmpTree Сравниваемое дерево
+ * \param[in,out] patch Patch-дерево
+ * \return Минимальное количество дополнительных узлов в главном дереве для полного совпадения со сравниваемым
+ */
 int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
 	unique_ptr<PatchNode> curPatchNode;
 	int curWeight;
@@ -178,7 +297,7 @@ int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
 	int minSumConnections = 0;
 
 	// Если количество детей patch не равно количеству детей в узле сравниваемого дерева
-	if (patch->getChildren().size() < cmpTree->children.size()) {
+	if (this->getChildren().size() < cmpTree->children.size()) {
 		auto uncaughtChildren = patch->findUncaughtChildren(cmpTree);
 		for (const auto& child : uncaughtChildren) {
 			minSumConnections += 1 + child->descendantsCount();
@@ -197,8 +316,63 @@ int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
 	return minSumConnections;
 }
 
+/**
+ * Поиск поддерева и построение дерева разности.
+ * \param[in] this Главное дерево, в котором проводится поиск
+ * \param[in] cmpTree Искомое дерево
+ * \param[out] deltaTree Дерево разности, содержающее узлы, которых не хватает главному дереву для появления в нем поддерева, совпадающего с искомым деревом
+ * \return Количество узлов, которые необходимо добавить к главному дереву
+ */
+int Node::findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree) {
+	vector<const Node*> probableCmpTrees = this->findDescendants(cmpTree->getName());
+	int curDeltaValue;
+	const Node* minTree = nullptr;
+	unique_ptr<Node> curDeltaTree;
+	unique_ptr<Node> minDeltaTree;
+	int minDelta = INT_MAX;
 
-// this - cmpTree
+	for (const auto& tree : probableCmpTrees) {
+		curDeltaValue = tree->buildDeltaTreeWrap(cmpTree, curDeltaTree);
+		if (curDeltaValue != -1 && curDeltaValue < minDelta) {
+			minTree = tree;
+			minDelta = curDeltaValue;
+			minDeltaTree = move(curDeltaTree);
+		}
+	}
+
+	if (minDelta == INT_MAX) {
+		deltaTree = nullptr;
+		return -1;
+	}
+
+	
+	auto parents = this->buildPedigree(minTree);
+
+	auto curNode = parents.get();
+
+	if (curNode->getChildren().empty()) {
+		deltaTree = move(minDeltaTree);
+		return minDelta;
+	}
+
+	while (!curNode->getChildren().empty() && !curNode->getChildren()[0]->getChildren().empty()) {
+		curNode = curNode->getChildren()[0];
+	}
+	curNode->removeChild(curNode->getChildren()[0]);
+
+	curNode->addChild(move(minDeltaTree));
+	
+	deltaTree = curNode->copy();
+
+	return minDelta;
+}
+
+/**
+ * Построение дерева разности на основе заданного Patch-дерева.
+ * \param[in] this Patch-дерево 
+ * \param[in, out] cmpTree Искомое дерево
+ * \return Успешность построения дерева разности
+ */
 int PatchNode::buildDeltaTree(Node* cmpTree) const
 {
 	int curMinConnectionIndex;
@@ -219,7 +393,8 @@ int PatchNode::buildDeltaTree(Node* cmpTree) const
 			if (patchChild->buildDeltaTree(curConnections[curMinConnectionIndex].first) == -1)
 				return -1;
 		}
-	 }
+	}
+	return 0;
 }
 
 
@@ -233,12 +408,39 @@ PatchNode::PatchNode(Node* rootSubTree)
 	this->rootSubTree = rootSubTree;
 }
 
+PatchNode::PatchNode(const Node* rootSubTree)
+{
+	this->rootSubTree = const_cast<Node*>(rootSubTree);
+}
+
+Node* PatchNode::getRoot() const
+{
+	return this->rootSubTree;
+}
+
+vector<pair<Node*, int>> PatchNode::getConnections() const
+{
+	return connections;
+}
+
+/**
+ * Добавить ребёнка к patch-узлу
+ * \param[in] this Patch-узел
+ * \param[in] newChild Новый ребёнок
+ * \return Указатель на добавленного ребёнка
+ */
 PatchNode* PatchNode::addChild(unique_ptr<PatchNode> newChild)
 {
 	this->children.push_back(move(newChild));
 	return (*(children.end() - 1)).get();
 }
 
+/**
+ * Добавить соединение к patch-узлу
+ * \param[in] this Patch-узел
+ * \param[in] weight Вес нового соединения
+ * \param[in] searchedSubTree Целевое дерево
+ */
 void PatchNode::addConnection(int weight, Node* searchedSubTree)
 {
 	auto newPair = make_pair(searchedSubTree, weight);
@@ -251,11 +453,11 @@ void PatchNode::addConnection(int weight, Node* searchedSubTree)
 	this->connections.push_back(newPair);
 }
 
-Node* PatchNode::getRoot() const
-{
-	return this->rootSubTree;
-}
-
+/**
+ * Получить список всех детей данного patch-узла
+ * \param[in] this patch-узел
+ * \return Список всех детей patch-узла
+ */
 vector<PatchNode*> PatchNode::getChildren() const
 {
 	vector<PatchNode*> resChildren;
@@ -265,6 +467,12 @@ vector<PatchNode*> PatchNode::getChildren() const
 	return resChildren;
 }
 
+/**
+ * Поиск исходящего из patch-узла соединения, указывающего на заданный узел дерева
+ * \param[in] this patch-узел
+ * \param[in] searchedNode Узел дерева
+ * \return Соединения, связывающее patch-узел и узел дерева
+ */
 vector<pair<Node*, int>>::const_iterator PatchNode::findConnection(const Node* searchedNode) const
 {
 	for (auto i = this->connections.begin(); i < this->connections.end(); i++) {
@@ -275,7 +483,12 @@ vector<pair<Node*, int>>::const_iterator PatchNode::findConnection(const Node* s
 	return this->connections.end();
 }
 
-// Найти соединение с минимальным весом(но не -1) и вернуть индекс этого соединения
+/**
+ * Поиск наименьшего валидного(с неотрицательным весом) соединения
+ * \param this patch-узел, среди соединений которого производится поиск
+ * \param startIndex Начальная позиция поиска
+ * \return Индекс наименьшего валидного соедниения среди соединений patch-узла
+ */
 int PatchNode::findMinValidConnection(int startIndex) const
 {
 	for (int i = startIndex; i < this->connections.size(); i++) {
@@ -285,10 +498,7 @@ int PatchNode::findMinValidConnection(int startIndex) const
 	return -1;
 }
 
-vector<pair<Node*, int>> PatchNode::getConnections() const
-{
-	return connections;
-}
+
 
 // Возвращает массив детей дерева, на которых не нашлось узлов патча среди детей текущего patchNode
 vector<Node*> PatchNode::findUncaughtChildren(const Node* treeNode) const
@@ -536,7 +746,7 @@ bool generatePngFromPatch(const PatchNode* patch, const std::string& pngFileName
 
 int main()
 {
-	setlocale(LC_ALL, "ru_RU.UTF-8");
+	setlocale(LC_ALL, "Russian");
 	string content;
 	string path{ R"(C:\Users\barten\Documents\eztree.txt)" };
 	 
@@ -544,23 +754,30 @@ int main()
 	string delimiters = "() \t\n\r";
 	cout << content << endl;
 
-	//string c1 = "1(2(3 4) 5(6(7) 8) 9)";
-	//string c2 = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
+	//string treeMain = "1(2(3 4) 5(6(7) 8) 9)";
+	//string cmpTree = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
 
-	string c1 = "1(3(5 6) 3(5(7) 6) 4)";
-	string c2 = "1(3(5 6) 3(5(7) 6) 4)";
+	//string treeMain = "1(3(5 6) 3(5(7) 6) 4)";
+	//string cmpTree = "1(3(5 6) 3(5(7) 6) 4)";
 
-	//string c1 = "tractor(steering_wheel (right_half left_half) who)";
-	//string c2 = "tractor(steering_wheel (right_half left_half) who)";
+	//string treeMain = "tractor(steering_wheel (right_half left_half) who)";
+	//string cmpTree = "tractor(steering_wheel (right_half left_half) who)";
 
-	//string c1 = "1(4 3(13 14) 4(5))";
-	//string c2 = "1(3(10 11 12 13 14) 4 4(5))";
-	auto tree1 = parseOnTree(c1, delimiters);
-	auto tree2 = parseOnTree(c2, delimiters);
+	// string treeMain = "1(4 3(13 14) 4(5))";
+	// string cmpTree = "1(3(10 11 12 13 14) 4 4(5))";
+
+	// wstring wstr = L"трактор";
+	// wcout << wstr << endl;
+
+	string treeMain = "tractor(wheel(bolts metal) wheel(tire bolts) wheel(metal crap bolts))";
+	string cmpTree = "tractor(wheel(bolts metal tire) wheel(metal crap bolts tire) wheel(tire bolts))";
+
+	auto tree1 = parseOnTree(treeMain, delimiters);
+	auto tree2 = parseOnTree(cmpTree, delimiters);
+
 	unique_ptr<Node> deltaTree;
-
-	auto patch = tree1->buildDeltaTreeWrap(tree2.get(), deltaTree);
-	if (patch != -1)
-		deltaTree->print();
-	cout << patch;
+	int delta = tree1->findSubTree(tree2.get(), deltaTree);
+	cout << delta << endl;
+	deltaTree->print();
+	
 }
