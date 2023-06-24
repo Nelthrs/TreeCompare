@@ -526,18 +526,18 @@ vector<Node*> PatchNode::findUncaughtChildren(const Node* treeNode) const
 class ExcForbiddenSymbol : public std::exception
 {
 public:
-	ExcForbiddenSymbol(unsigned char symbol)
+	explicit ExcForbiddenSymbol(unsigned char symbol)
 	{
 		this->symbol = symbol;
 	}
 
 	const char* what() const noexcept override
 	{
-		string msg = "Íàéäåí íåäîïóñòèìûé ñèìâîë \'" + to_string(symbol) + "\'" + "â ôàéëå \'" + filename + "\'";
+		string msg = "Обнаружен недопустимый сивол \'" + to_string(symbol) + "\'" + "в файле \'" + filename + "\'";
 		return msg.c_str();
 	}
 
-	void setFilename(string filename)
+	void setFilename(const string& filename)
 	{
 		this->filename = filename;
 	}
@@ -558,33 +558,55 @@ protected:
 	string filename;
 };
 
+class ExcBadBrackets : public std::exception
+{
+public:
+	explicit ExcBadBrackets(int bracketBalance)
+	{
+		this->bracketBalance = bracketBalance;
+	}
+	const char* what() const noexcept override
+	{
+		string msg = "Баланс скобок нарушен.";
+		if (bracketBalance > 0) {
+			msg.append("Открывающих скобок больше на ");
+			msg.append(to_string(bracketBalance));
+		}
+		else {
+			msg.append("Закрывающих скобок больше на ");
+			msg.append(to_string(abs(bracketBalance)));
+		}
+	}
+protected:
+	int bracketBalance;
+};
 class Lexem {
 public:
-	Lexem(LEXEM_TYPE type)
+	explicit Lexem(LexemType type)
 	{
 		this->nodeType = type;
 	}
-	Lexem(LEXEM_TYPE type, string nodeName)
+	Lexem(LexemType type, const string& nodeName)
 	{
 		this->nodeType = type;
 		this->nodeName = nodeName;
 	}
-	string name()
+	string getName() const
 	{
-		if (nodeType == NODE)
+		if (nodeType == LexemType::Node)
 			return this->nodeName;
-		else if (nodeType == LEFT_BRACKET)
+		else if (nodeType == LexemType::LeftBracket)
 			return "LEFT_BRACKET";
-		else if (nodeType == RIGHT_BRACKET)
+		else if (nodeType == LexemType::RightBracket)
 			return "RIGHT_BRACKET";
 		return "Unknown";
 	}
-	LEXEM_TYPE type()
+	LexemType getType() const
 	{
 		return this->nodeType;
 	}
 protected:
-	LEXEM_TYPE nodeType;
+	LexemType nodeType;
 	string nodeName;
 };
 
@@ -611,11 +633,21 @@ bool readFile(const string& path, string* content)
 
 string extractWord(const string& str, unsigned startIndex, const string& delimiters)
 {
-	// Íàéòè ïåðâîå âõîæäåíèå îäíîãî èç ðàçäåëèòåëåé
+	// Найти конец слова
 	auto word_end = str.find_first_of(delimiters, startIndex);
 
-	// Ñ÷èòàòü, ÷òî ñëîâî êîí÷èëîñü, êîãäà âñòðå÷åí ïåðâûé ðàçäåëèòåëü
+	// Вырезать слово
 	return str.substr(startIndex, word_end - startIndex);
+}
+
+int countLexemOfType(const vector<Lexem>& lexems, LexemType targetType) 
+{
+	int targetLexemsCount = 0;
+	for (const auto& lexem : lexems) {
+		if (lexem.getType() == targetType)
+			targetLexemsCount++;
+	}
+	return targetLexemsCount;
 }
 
 vector<Lexem> strToLexems(const string& content, const string& delimiters)
@@ -627,18 +659,29 @@ vector<Lexem> strToLexems(const string& content, const string& delimiters)
 		const char curSymbol = content[i];
 		if (curSymbol == '(')
 		{
-			lexems.push_back(Lexem(LEFT_BRACKET));
+			lexems.emplace_back(LexemType::LeftBracket);
 		}
 		else if (curSymbol == ')')
 		{
-			lexems.push_back(Lexem(RIGHT_BRACKET));
+			lexems.emplace_back(LexemType::RightBracket);
 		}
 		else if (isalnum(curSymbol))
 		{
 			string nodeName = extractWord(content, i, delimiters);
-			lexems.push_back(Lexem(NODE, nodeName));
+			lexems.emplace_back(LexemType::Node, nodeName);
 			i += nodeName.length() - 1;
 		}
+		else if (delimiters.find(curSymbol) == std::string::npos) 
+		{
+			ExcForbiddenSymbol exception(curSymbol);
+			throw exception;
+		}
+		
+	}
+	int bracketBalance = countLexemOfType(lexems, LexemType::LeftBracket) - countLexemOfType(lexems, LexemType::RightBracket);
+	if (bracketBalance != 0) {
+		ExcBadBrackets exception(bracketBalance);
+		throw exception;
 	}
 	return lexems;
 }
@@ -716,7 +759,6 @@ void generateDotFile(const PatchNode* patch, std::ostream& dotStream) {
 	dotStream << "}" << std::endl;
 }
 
-
 bool generatePngFromDotContent(const std::string& dotContent, const std::string& pngFileName) {
 	// Создайте временный файл с содержимым DOT
 	std::string dotFileName = "temp.dot";
@@ -753,21 +795,6 @@ int main()
 	readFile(path, &content);
 	string delimiters = "() \t\n\r";
 	cout << content << endl;
-
-	//string treeMain = "1(2(3 4) 5(6(7) 8) 9)";
-	//string cmpTree = "1(2(3(4 5) 6) 5(8(9) 10) 11)";
-
-	//string treeMain = "1(3(5 6) 3(5(7) 6) 4)";
-	//string cmpTree = "1(3(5 6) 3(5(7) 6) 4)";
-
-	//string treeMain = "tractor(steering_wheel (right_half left_half) who)";
-	//string cmpTree = "tractor(steering_wheel (right_half left_half) who)";
-
-	// string treeMain = "1(4 3(13 14) 4(5))";
-	// string cmpTree = "1(3(10 11 12 13 14) 4 4(5))";
-
-	// wstring wstr = L"трактор";
-	// wcout << wstr << endl;
 
 	string treeMain = "tractor(wheel(bolts metal) wheel(tire bolts) wheel(metal crap bolts))";
 	string cmpTree = "tractor(wheel(bolts metal tire) wheel(metal crap bolts tire) wheel(tire bolts))";

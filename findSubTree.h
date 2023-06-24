@@ -17,9 +17,9 @@
 using namespace std;
 
 
-enum LEXEM_TYPE
+enum class LexemType
 {
-	NODE, LEFT_BRACKET, RIGHT_BRACKET, UNKNOWN
+	Node, LeftBracket, RightBracket, Unknown
 };
 
 enum NODE_TYPES {
