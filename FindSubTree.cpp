@@ -190,7 +190,7 @@ vector<const Node*> Node::findDescendants(const string& searchedNodeName) const
 Node* Node::insertDescendant(const Node* removingChild, unique_ptr<Node>& insertingNode)
 {
 	Node* insertedChild = nullptr;
-	for (auto& child : this->children) {
+	for (const auto& child : this->children) {
 		if (child.get() == removingChild) {
 			this->removeChild(child.get());
 			return this->addChild(move(insertingNode));
@@ -226,7 +226,7 @@ int Node::buildDeltaTreeWrap(const Node* cmpTree, unique_ptr<Node>& deltaTree) c
 		deltaTree = move(cmpTreeCopy);
 	}
 
-	return 0;
+	return patch->getConnections()[0].second;
 }
 
 /**
@@ -301,6 +301,7 @@ int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
 				continue;
 			}
 
+			// Считать что узлы идентичны, если они являются
 			if (mainChild->isLeaf() && cmpChild->isLeaf()) {
 				curWeight = 0;
 			}
@@ -404,18 +405,18 @@ int Node::findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree) const {
 int PatchNode::buildDeltaTree(Node* cmpTree) const
 {
 	int curMinConnectionIndex;
-	vector<pair<Node*, int>> curConnections;
 
 	for (auto patchChild : this->getChildren()) {
-		curConnections = patchChild->getConnections();
+		auto& curConnections = patchChild->connections;
 		curMinConnectionIndex = patchChild->findMinValidConnection();
 
 		if (curMinConnectionIndex == -1)
 			return -1;
 
-		
-		if (curConnections[curMinConnectionIndex].second == 0) {
-			cmpTree->removeChild(curConnections[curMinConnectionIndex].first);
+		auto curConnectionToDelete = curConnections[curMinConnectionIndex];
+		if (curConnectionToDelete.second == 0) {
+			this->deleteAllChildReferences(curConnectionToDelete.first);
+			cmpTree->removeChild(curConnectionToDelete.first);
 		}
 		else {
 			if (patchChild->buildDeltaTree(curConnections[curMinConnectionIndex].first) == -1)
@@ -449,6 +450,30 @@ Node* PatchNode::getRoot() const
 vector<pair<Node*, int>> PatchNode::getConnections() const
 {
 	return connections;
+}
+
+/**
+ * Удаляет все соединения ведущие к указанному узлу из дочерних patch-узлов.
+ * \param this Родительский patch-узел
+ * \param selectedNode Выбранный узел
+ * \return Количество удаленных соединений
+ */
+int PatchNode::deleteAllChildReferences(const Node* selectedNode) const
+{
+	int deletedConnectionsCount = 0;
+	for (const auto& patchChild : this->children) {
+		auto& curConnections = patchChild->connections;
+		for (auto conIt = curConnections.begin(); conIt != curConnections.end();) {
+			if ((*conIt).first == selectedNode) {
+				conIt = curConnections.erase(conIt);
+				deletedConnectionsCount++;
+			}
+			else {
+				++conIt;
+			}
+		}
+	}
+	return deletedConnectionsCount;
 }
 
 /**
@@ -761,70 +786,6 @@ unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, in
 		throw "Unknown error";
 	}
 	return builtTree;
-}
-
-// Картинки
-void generateDotFile(const PatchNode* patch, std::ostream& dotStream) {
-	dotStream << "digraph Patch {" << std::endl;
-
-	std::set<Node*> visitedNodes;
-	std::stack<const PatchNode*> nodeStack;
-
-	// Рекурсивно обходите PatchNode и его детей
-	nodeStack.push(patch);
-	while (!nodeStack.empty()) {
-		const PatchNode* currNode = nodeStack.top();
-		nodeStack.pop();
-
-		// Добавьте узел в файл DOT, если он еще не посещен
-		if (visitedNodes.find(currNode->getRoot()) == visitedNodes.end()) {
-			visitedNodes.insert(currNode->getRoot());
-			dotStream << "    \"" << currNode->getRoot()->getName() << ": Patch\";" << std::endl;
-		}
-
-		// Добавьте соединения между текущим узлом и его детьми с подписями весов
-		for (const auto& connection : currNode->getConnections()) {
-			dotStream << "    \"" << currNode->getRoot()->getName() << ": Patch\" -> \"" << connection.first->getName() << "\" [label=\"" << connection.second << "\"];" << std::endl;
-		}
-
-		// Добавьте соединения между текущим узлом и его детьми PatchNode
-		for (const auto& child : currNode->getChildren()) {
-			dotStream << "    \"" << currNode->getRoot()->getName() << ": Patch\" -> \"" << child->getRoot()->getName() << ": Patch\" [style=dotted];" << std::endl;
-		}
-
-		// Поместите всех детей текущего узла в стек для обхода
-		for (const auto& child : currNode->getChildren()) {
-			nodeStack.push(child);
-		}
-	}
-
-	dotStream << "}" << std::endl;
-}
-
-bool generatePngFromDotContent(const std::string& dotContent, const std::string& pngFileName) {
-	// Создайте временный файл с содержимым DOT
-	std::string dotFileName = "temp.dot";
-	std::ofstream dotFile(dotFileName);
-	dotFile << dotContent;
-	dotFile.close();
-
-	// Запустите команду dot для создания PNG из DOT
-	std::string command = "dot -Tpng " + dotFileName + " -o " + pngFileName;
-	int result = std::system(command.c_str());
-
-	// Удалите временный файл DOT
-	std::filesystem::remove(dotFileName);
-
-	// Верните true, если конвертация прошла успешно
-	return (result == 0);
-}
-
-bool generatePngFromPatch(const PatchNode* patch, const std::string& pngFileName) {
-	std::stringstream dotStream;
-	generateDotFile(patch, dotStream);
-	std::string dotContent = dotStream.str();
-
-	return generatePngFromDotContent(dotContent, pngFileName);
 }
 
 

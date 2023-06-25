@@ -64,6 +64,7 @@ public:
 	PatchNode* addChild(unique_ptr<PatchNode> newChild);
 	void addConnection(int weight, Node* searchedSubTree);
 	vector<pair<Node*, int>> getConnections() const;
+	int deleteAllChildReferences(const Node* selectedNode) const;
 	vector<Node*> findUncaughtChildren(const Node* treeNode) const;
 	Node* getRoot() const;
 	vector<PatchNode*> getChildren() const;
