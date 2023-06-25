@@ -18,9 +18,11 @@ Node::Node(const string& data)
  * \param[in] this Родительский узел
  * \param[in] newChild Новый ребёнок
  */
-void Node::addChild(unique_ptr<Node> newChild)
+Node* Node::addChild(unique_ptr<Node> newChild)
 {
+	Node* addedChild = newChild.get();
 	this->children.push_back(move(newChild));
+	return addedChild;
 }
 
 /**
@@ -178,6 +180,35 @@ vector<const Node*> Node::findDescendants(const string& searchedNodeName) const
 	return foundNodes;
 }
 
+/**
+ * Вставка в дерево одного потомка вместо другого.
+ * \param[in,out] this Дерево, в которое производится вставка
+ * \param[in] removingChild Удаляемый узел
+ * \param[in] insertingNode Замена удаленному узлу
+ * \return Указатель на новый узел
+ */
+Node* Node::insertDescendant(const Node* removingChild, unique_ptr<Node>& insertingNode)
+{
+	Node* insertedChild = nullptr;
+	for (auto& child : this->children) {
+		if (child.get() == removingChild) {
+			this->removeChild(child.get());
+			return this->addChild(move(insertingNode));
+		}
+		insertedChild = child->insertDescendant(removingChild, insertingNode);
+		if (insertedChild != nullptr)
+			return insertedChild;
+	}
+	return nullptr;
+}
+
+/**
+ * Строит дерево разности, содержащее узлы, которых не хватает главному дереву для появления в нем поддерева, совпадающего с искомым деревом
+ * \param[in] this Главное дерево
+ * \param[in] cmpTree Искомое дерево
+ * \param[out] deltaTree Дерево разности
+ * \return Количество нехватающих узлов в главном дереве
+ */
 int Node::buildDeltaTreeWrap(const Node* cmpTree, unique_ptr<Node>& deltaTree) const
 {
 	unique_ptr<Node> cmpTreeCopy = cmpTree->copy();
@@ -204,17 +235,18 @@ int Node::buildDeltaTreeWrap(const Node* cmpTree, unique_ptr<Node>& deltaTree) c
  * \param[in] searchedChild Узел, для которого составляется родословная
  * \return Родословная узла
  */
-unique_ptr<Node> Node::buildPedigree(const Node* searchedChild) const
+unique_ptr<Node> Node::buildPedigree(const Node* searchedChild, Node** deepestChild) const
 {
 	unique_ptr<Node> foundNode;
 	unique_ptr<Node> pedigree = make_unique<Node>(this->getName());
 	
 	if (this == searchedChild) {
+		*deepestChild = pedigree.get();
 		return move(pedigree);
 	}
 
 	for (const auto& treeChild : children) {
-		foundNode = treeChild->buildPedigree(searchedChild);
+		foundNode = treeChild->buildPedigree(searchedChild, deepestChild);
 		if (foundNode != nullptr) {
 			pedigree->addChild(move(foundNode));
 			return move(pedigree);
@@ -323,7 +355,7 @@ int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
  * \param[out] deltaTree Дерево разности, содержающее узлы, которых не хватает главному дереву для появления в нем поддерева, совпадающего с искомым деревом
  * \return Количество узлов, которые необходимо добавить к главному дереву
  */
-int Node::findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree) {
+int Node::findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree) const {
 	vector<const Node*> probableCmpTrees = this->findDescendants(cmpTree->getName());
 	int curDeltaValue;
 	const Node* minTree = nullptr;
@@ -331,6 +363,7 @@ int Node::findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree) {
 	unique_ptr<Node> minDeltaTree;
 	int minDelta = INT_MAX;
 
+	// Найти минимальное дерево разности среди узлов, имя котороых совпадает с именем корня искомого дерева
 	for (const auto& tree : probableCmpTrees) {
 		curDeltaValue = tree->buildDeltaTreeWrap(cmpTree, curDeltaTree);
 		if (curDeltaValue != -1 && curDeltaValue < minDelta) {
@@ -340,29 +373,24 @@ int Node::findSubTree(const Node* cmpTree, unique_ptr<Node>& deltaTree) {
 		}
 	}
 
+	// Если ни одного дерева разности не было найдено, считать результат поиска отрицательным
 	if (minDelta == INT_MAX) {
 		deltaTree = nullptr;
 		return -1;
 	}
 
-	
-	auto parents = this->buildPedigree(minTree);
-
-	auto curNode = parents.get();
-
-	if (curNode->getChildren().empty()) {
-		deltaTree = move(minDeltaTree);
+	// Если минимальное дерево разности не содержит ни одного узла, считать поиск успешным
+	if (minDeltaTree.get() == nullptr) {
 		return minDelta;
 	}
 
-	while (!curNode->getChildren().empty() && !curNode->getChildren()[0]->getChildren().empty()) {
-		curNode = curNode->getChildren()[0];
-	}
-	curNode->removeChild(curNode->getChildren()[0]);
+	// Иначе от корня минимально дерева разности построить родословную до корня главного дерева
+	Node* removingChild = nullptr;
+	auto parents = this->buildPedigree(minTree, &removingChild);
 
-	curNode->addChild(move(minDeltaTree));
+	parents->insertDescendant(removingChild, minDeltaTree);
 	
-	deltaTree = curNode->copy();
+	deltaTree = move(parents);
 
 	return minDelta;
 }
@@ -498,8 +526,6 @@ int PatchNode::findMinValidConnection(int startIndex) const
 	return -1;
 }
 
-
-
 // Возвращает массив детей дерева, на которых не нашлось узлов патча среди детей текущего patchNode
 vector<Node*> PatchNode::findUncaughtChildren(const Node* treeNode) const
 {
@@ -520,9 +546,6 @@ vector<Node*> PatchNode::findUncaughtChildren(const Node* treeNode) const
 }
 
 
-
-
-
 class ExcForbiddenSymbol : public std::exception
 {
 public:
@@ -533,7 +556,7 @@ public:
 
 	const char* what() const noexcept override
 	{
-		string msg = "Обнаружен недопустимый сивол \'" + to_string(symbol) + "\'" + "в файле \'" + filename + "\'";
+		string msg = "Detected invalid character \'" + to_string(symbol) + "\'" + "in the file \'" + filename + "\'";
 		return msg.c_str();
 	}
 
@@ -551,7 +574,7 @@ class ExcSeveralTrees : public std::exception
 public:
 	const char* what() const noexcept override
 	{
-		string msg = "Â ôàéëå \'" + filename + "\'" + "ñîäåðæèòñÿ áîëåå 1 äåðåâà";
+		string msg = "There are more than one tree in the file \'" + filename + "\'";
 		return msg.c_str();
 	}
 protected:
@@ -567,18 +590,23 @@ public:
 	}
 	const char* what() const noexcept override
 	{
-		string msg = "Баланс скобок нарушен.";
+		msg = "The balance of brackets is off: ";
+
 		if (bracketBalance > 0) {
-			msg.append("Открывающих скобок больше на ");
+			msg.append("Opening brackets are ");
 			msg.append(to_string(bracketBalance));
 		}
 		else {
-			msg.append("Закрывающих скобок больше на ");
+			msg.append("Closing brackets are ");
 			msg.append(to_string(abs(bracketBalance)));
 		}
+		msg.append(" more");
+
+		return msg.c_str();
 	}
 protected:
 	int bracketBalance;
+	mutable std::string msg;
 };
 class Lexem {
 public:
@@ -612,7 +640,7 @@ protected:
 
 
 
-bool readFile(const string& path, string* content)
+bool readFile(const string& path, string& content)
 {
 	bool success = false;
 	string line;
@@ -623,7 +651,7 @@ bool readFile(const string& path, string* content)
 		// ñ÷èòûâàåì òåêñòîâûé ôàéë è çàïèñûâàåì åãî â îäíó ñòðîêó
 		while (getline(in, line))
 		{
-			*content += line;
+			content += line;
 		}
 		success = true;
 	}
@@ -688,26 +716,27 @@ vector<Lexem> strToLexems(const string& content, const string& delimiters)
 
 unique_ptr<Node> sexpToTree(vector<Lexem>& lexems, int& index) {
 
-	auto root = make_unique<Node>(lexems[index++].name());
+	auto root = make_unique<Node>(lexems[index].getName());
+	index++;
 	while (index < lexems.size()) {
 		Lexem curLexem = lexems[index];
-		Lexem nextLexem(UNKNOWN);
+		Lexem nextLexem(LexemType::Unknown);
 		if (index < lexems.size() - 1)
 			nextLexem = lexems[index + 1];
 
-		if (curLexem.type() == NODE)
+		if (curLexem.getType() == LexemType::Node)
 		{
 			unique_ptr<Node> child;
 
-			if (nextLexem.type() == LEFT_BRACKET)
+			if (nextLexem.getType() == LexemType::LeftBracket)
 				child = sexpToTree(lexems, index);
 			else
-				child = make_unique<Node>(curLexem.name());
+				child = make_unique<Node>(curLexem.getName());
 
 			root->addChild(move(child));
 			index++;
 		}
-		else if (curLexem.type() == RIGHT_BRACKET)
+		else if (curLexem.getType() == LexemType::RightBracket)
 			return root;
 		else
 			index++;
@@ -717,8 +746,21 @@ unique_ptr<Node> sexpToTree(vector<Lexem>& lexems, int& index) {
 
 unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, int startIndex)
 {
-	vector<Lexem> lexems = strToLexems(content, delimiters);
-	return sexpToTree(lexems, startIndex);
+	unique_ptr<Node> builtTree;
+	try {
+		vector<Lexem> lexems = strToLexems(content, delimiters);
+		builtTree = sexpToTree(lexems, startIndex);
+	}
+	catch (ExcBadBrackets& bracketException) {
+		throw bracketException;
+	}
+	catch (ExcForbiddenSymbol& symbolException) {
+		throw symbolException;
+	}
+	catch (...) {
+		throw "Unknown error";
+	}
+	return builtTree;
 }
 
 // Картинки
@@ -786,25 +828,64 @@ bool generatePngFromPatch(const PatchNode* patch, const std::string& pngFileName
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
-	setlocale(LC_ALL, "Russian");
-	string content;
-	string path{ R"(C:\Users\barten\Documents\eztree.txt)" };
-	 
-	readFile(path, &content);
-	string delimiters = "() \t\n\r";
-	cout << content << endl;
-
-	string treeMain = "tractor(wheel(bolts metal) wheel(tire bolts) wheel(metal crap bolts))";
-	string cmpTree = "tractor(wheel(bolts metal tire) wheel(metal crap bolts tire) wheel(tire bolts))";
-
-	auto tree1 = parseOnTree(treeMain, delimiters);
-	auto tree2 = parseOnTree(cmpTree, delimiters);
-
-	unique_ptr<Node> deltaTree;
-	int delta = tree1->findSubTree(tree2.get(), deltaTree);
-	cout << delta << endl;
-	deltaTree->print();
+	if (argc != 3) {
+		cout << "There must be 2 command-line arguments(recieved "<< to_string(argc - 1) <<") : \n\t1.path to main tree \n\t2.path to searched tree \n\t3.path to result delta tree";
+		return -1;
+	}
 	
+
+	string mainTreeNote, searchedTreeNote;
+	string mainTreePath = argv[1];
+	string searchedTreePath = argv[2];
+	
+	readFile(mainTreePath, mainTreeNote);
+	readFile(searchedTreePath, searchedTreeNote);
+	string delimiters = "() \t\n\r";
+
+	unique_ptr<Node> mainTree, searchedTree, deltaTree;
+	try {
+		mainTree = parseOnTree(mainTreeNote, delimiters);
+	}
+	catch (ExcBadBrackets& bracketException) {
+		cout << bracketException.what() << endl;
+	}
+	catch (ExcForbiddenSymbol& symbolException) {
+		symbolException.setFilename(mainTreePath);
+		cout << symbolException.what() << endl;
+	}
+	catch (...) {
+		cout << "Can't parse file '" + mainTreePath + "'" << endl;
+		return -1;
+	}
+
+	try {
+		searchedTree = parseOnTree(searchedTreeNote, delimiters);
+	}
+	catch (ExcBadBrackets& bracketException) {
+		cout << bracketException.what() << endl;
+	}
+	catch (ExcForbiddenSymbol& symbolException) {
+		symbolException.setFilename(searchedTreePath);
+		cout << symbolException.what() << endl;
+	}
+	catch (...) {
+		cout << "Can't parse file '" + searchedTreePath + "'" << endl;
+		return -1;
+	}
+
+	int delta = mainTree->findSubTree(searchedTree.get(), deltaTree);
+	if (delta != -1 && deltaTree.get() == nullptr) {
+		cout << "The searched tree is completely contained in the given tree.";
+	}
+	else if (delta == -1 && deltaTree.get() == nullptr) {
+		cout << "The searched tree is not in the given tree.";
+	}
+	else if (deltaTree.get() != nullptr) {
+		cout << "The searched tree is partially contained in the given tree. \nCorresponding delta tree:" << endl;
+		cout << delta << endl;
+		deltaTree->print();
+	}
+
 }
