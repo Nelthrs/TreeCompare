@@ -350,7 +350,7 @@ int Node::buildPatch(const Node* cmpTree, PatchNode* patch) const {
 }
 
 /**
- * Поиск поддерева и построение дерева разности.
+ * Поиск поддерева и построение минимального дерева разности.
  * \param[in] this Главное дерево, в котором проводится поиск
  * \param[in] cmpTree Искомое дерево
  * \param[out] deltaTree Дерево разности, содержающее узлы, которых не хватает главному дереву для появления в нем поддерева, совпадающего с искомым деревом
@@ -406,20 +406,24 @@ int PatchNode::buildDeltaTree(Node* cmpTree) const
 {
 	int curMinConnectionIndex;
 
+	// Для каждого patch-узла
 	for (auto patchChild : this->getChildren()) {
+		// Выбрать самое легкое соединение
 		auto& curConnections = patchChild->connections;
 		curMinConnectionIndex = patchChild->findMinValidConnection();
 
 		if (curMinConnectionIndex == -1)
 			return -1;
 
+		// Если вес соединения равен нулю, удалить из дерева разности узел, на который указывает данное соединение
 		auto curConnectionToDelete = curConnections[curMinConnectionIndex];
 		if (curConnectionToDelete.second == 0) {
 			this->deleteAllChildReferences(curConnectionToDelete.first);
 			cmpTree->removeChild(curConnectionToDelete.first);
 		}
+		// Иначе составить дерево разности для узла, на который указывает данное соединение
 		else {
-			if (patchChild->buildDeltaTree(curConnections[curMinConnectionIndex].first) == -1)
+			if (patchChild->buildDeltaTree(curConnectionToDelete.first) == -1)
 				return -1;
 		}
 	}
@@ -707,7 +711,8 @@ vector<Lexem> strToLexems(const string& content, const string& delimiters)
 {
 	vector<Lexem> lexems;
 	int i = 0;
-	for (i; i < content.length(); i++)
+	int contentLength = content.length();
+	for (i; i < contentLength; i++)
 	{
 		const char curSymbol = content[i];
 		if (curSymbol == '(')
@@ -743,10 +748,11 @@ unique_ptr<Node> sexpToTree(vector<Lexem>& lexems, int& index) {
 
 	auto root = make_unique<Node>(lexems[index].getName());
 	index++;
-	while (index < lexems.size()) {
+	int lexemsSize = index < lexems.size();
+	while (index < lexemsSize) {
 		Lexem curLexem = lexems[index];
 		Lexem nextLexem(LexemType::Unknown);
-		if (index < lexems.size() - 1)
+		if (index < lexemsSize - 1)
 			nextLexem = lexems[index + 1];
 
 		if (curLexem.getType() == LexemType::Node)
@@ -791,18 +797,35 @@ unique_ptr<Node> parseOnTree(const string& content, const string& delimiters, in
 
 int main(int argc, char* argv[])
 {
+	
 	if (argc != 3) {
 		cout << "There must be 2 command-line arguments(recieved "<< to_string(argc - 1) <<") : \n\t1.path to main tree \n\t2.path to searched tree \n\t3.path to result delta tree";
 		return -1;
 	}
-	
 
-	string mainTreeNote, searchedTreeNote;
 	string mainTreePath = argv[1];
 	string searchedTreePath = argv[2];
+	if (!std::filesystem::exists(mainTreePath)) {
+		cout << "File with the main tree not exists" << endl;
+		return -1;
+	}
+	if (!std::filesystem::exists(searchedTreePath)) {
+		cout << "File with the searched tree not exists" << endl;
+		return -1;
+	}
 	
+		
+	string mainTreeNote, searchedTreeNote;
+	// string mainTreePath = "E:\\was\\FindSubTree\\x64\\Release\\mainTree.txt";
+	// string searchedTreePath = "E:\\was\\FindSubTree\\x64\\Release\\searchedTree.txt";
 	readFile(mainTreePath, mainTreeNote);
 	readFile(searchedTreePath, searchedTreeNote);
+
+	if (mainTreeNote.empty() || searchedTreeNote.empty()) {
+		cout << "One or both files are empty";
+		return -1;
+	}
+	
 	string delimiters = "() \t\n\r";
 
 	unique_ptr<Node> mainTree, searchedTree, deltaTree;
@@ -848,5 +871,6 @@ int main(int argc, char* argv[])
 		cout << delta << endl;
 		deltaTree->print();
 	}
+	return 0;
 
 }
