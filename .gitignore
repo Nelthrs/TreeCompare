@@ -5,3 +5,16 @@
 *.png
 *.dot
 buildTree_5
+*.sarif
+*.xml
+*.log
+*.recipe
+*.ilk
+*.obj
+*.pchast
+*.pch
+*.tlog
+testFindSubTree/x64/Debug/testFindSubTree.vcxproj.FileListAbsolute.txt
+*.idb
+testFindSubTree/x64/Debug/CodeAnalysisResultManifest.txt
+*.pdb
